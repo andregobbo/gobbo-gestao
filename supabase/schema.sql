@@ -262,7 +262,7 @@ create table if not exists public.abastecimentos (
   data date not null default current_date,
   caminhao_id uuid references public.caminhoes (id) on delete set null,
   motorista_id uuid references public.motoristas (id) on delete set null,
-  km int not null,                        -- odômetro no abastecimento
+  km int,                                 -- odômetro no abastecimento (obrigatório no app)
   litros numeric(10, 2) not null,
   valor numeric(12, 2),
   posto text,
