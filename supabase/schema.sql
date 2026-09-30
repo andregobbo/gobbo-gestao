@@ -183,7 +183,7 @@ language plpgsql security definer set search_path = public as $$
 begin
   insert into public.perfis (id, nome, email, papel)
   values (new.id, coalesce(new.raw_user_meta_data ->> 'nome', split_part(new.email, '@', 1)), new.email,
-          case when lower(new.email) = any (array['andrergobbo@gmail.com']) then 'socio' else 'motorista' end)
+          case when lower(new.email) = any (array['andrergobbo@gmail.com', 'andregobbo@outlook.com.br']) then 'socio' else 'motorista' end)
   on conflict (id) do nothing;
   return new;
 end;
@@ -373,9 +373,10 @@ begin
     select max(km), sum(litros) into v_ult, v_l from public.abastecimentos a where a.motorista_id = m.id and a.data between v_ini and v_fim;
     continue when v_ult is null or v_ant is null or coalesce(v_l, 0) = 0;
     v_km := v_ult - v_ant; v_media := round(v_km / v_l, 2);
-    v_val := case when v_media >= cfg.bonus_faixa2_km_l then cfg.bonus_faixa2_valor
-                  when v_media >= cfg.bonus_faixa1_km_l then cfg.bonus_faixa1_valor else 0 end;
     v_alerta := case when v_media > 5 or v_media < 2 then 'Média fora do normal – confira se falta abastecimento ou KM digitado errado' end;
+    v_val := case when v_alerta is not null then 0
+                  when v_media >= cfg.bonus_faixa2_km_l then cfg.bonus_faixa2_valor
+                  when v_media >= cfg.bonus_faixa1_km_l then cfg.bonus_faixa1_valor else 0 end;
     v_desp := null;
     if v_val > 0 and v_alerta is null
        and not exists (select 1 from public.bonus_media b where b.semana_ini = v_ini and b.motorista_id = m.id and b.despesa_id is not null) then
