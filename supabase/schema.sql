@@ -1,0 +1,250 @@
+-- =====================================================================
+-- Gobbo Logística – Plataforma de gestão
+-- Esquema do banco (Supabase / PostgreSQL)
+-- Rode este arquivo UMA vez no SQL Editor do Supabase; depois rode seed.sql.
+-- =====================================================================
+
+create extension if not exists "pgcrypto";
+
+-- ---------------------------------------------------------------------
+-- Perfis de acesso (1 linha por usuário do Supabase Auth)
+--   papel = 'socio'     -> acesso total
+--   papel = 'motorista' -> vê/lança só as próprias viagens e vê o próprio acerto
+-- ---------------------------------------------------------------------
+create table if not exists public.perfis (
+  id uuid primary key references auth.users (id) on delete cascade,
+  nome text not null,
+  email text,
+  papel text not null default 'motorista' check (papel in ('socio', 'motorista')),
+  motorista_id uuid,
+  criado_em timestamptz not null default now()
+);
+
+create table if not exists public.config (
+  id text primary key default 'geral',
+  taxa_cartao numeric(6, 4) not null default 0.0899,
+  saldo_inicial numeric(14, 2) not null default 0
+);
+
+create table if not exists public.categorias (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null unique,
+  grupo text not null,
+  ordem int not null default 0
+);
+
+create table if not exists public.caminhoes (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null,
+  modelo text,
+  placa text,
+  ano int,
+  situacao text not null default 'ativo' check (situacao in ('ativo', 'vendido', 'parado')),
+  venc_seguro date,
+  venc_licenciamento date,
+  km int,
+  obs text
+);
+
+create table if not exists public.motoristas (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null,
+  apelido text,
+  caminhao_id uuid references public.caminhoes (id) on delete set null,
+  admissao date,
+  fixo numeric(12, 2) not null default 3500,
+  media_ref numeric(12, 2) not null default 200,
+  ativo boolean not null default true,
+  obs text
+);
+
+alter table public.perfis
+  drop constraint if exists perfis_motorista_fk,
+  add constraint perfis_motorista_fk foreign key (motorista_id) references public.motoristas (id) on delete set null;
+
+create table if not exists public.tabela_fretes (
+  id uuid primary key default gen_random_uuid(),
+  cidade text not null unique,
+  valor_16 numeric(12, 2),
+  valor_18 numeric(12, 2)
+);
+
+-- Semanas de fechamento com a Levíssima
+create table if not exists public.semanas (
+  id uuid primary key default gen_random_uuid(),
+  codigo text not null unique,          -- ex.: '18.09 a 24.09'
+  inicio date not null,
+  fim date not null,
+  status text not null default 'aberta' check (status in ('aberta', 'fechada', 'paga')),
+  total_oficial numeric(14, 2),
+  obs text
+);
+
+-- Fretes (Kanban: agendado -> em_rota -> entregue -> fechado -> recebido)
+create table if not exists public.fretes (
+  id uuid primary key default gen_random_uuid(),
+  data date not null,
+  semana_id uuid references public.semanas (id) on delete set null,
+  motorista_id uuid references public.motoristas (id) on delete set null,
+  caminhao_id uuid references public.caminhoes (id) on delete set null,
+  origem text,
+  cliente text not null,
+  cidade text,
+  tipo text not null default 'Entrega',
+  valor numeric(14, 2) not null default 0,
+  status text not null default 'agendado' check (status in ('agendado', 'em_rota', 'entregue', 'fechado', 'recebido')),
+  fonte text,
+  obs text,
+  criado_por uuid default auth.uid(),
+  criado_em timestamptz not null default now()
+);
+create index if not exists fretes_data_idx on public.fretes (data);
+create index if not exists fretes_motorista_idx on public.fretes (motorista_id);
+
+-- Despesas / contas a pagar (Kanban derivado de vencimento + status)
+create table if not exists public.despesas (
+  id uuid primary key default gen_random_uuid(),
+  competencia date not null,
+  vencimento date,
+  pagamento date,
+  categoria text not null,
+  descricao text not null,
+  fornecedor text,
+  caminhao_id uuid references public.caminhoes (id) on delete set null,
+  motorista_id uuid references public.motoristas (id) on delete set null,
+  forma text,                             -- 'Pago por sócio' e 'Abatimento' não saem do caixa
+  valor numeric(14, 2) not null default 0,
+  status text not null default 'a_pagar' check (status in ('a_pagar', 'pago')),
+  obs text,
+  criado_em timestamptz not null default now()
+);
+create index if not exists despesas_comp_idx on public.despesas (competencia);
+create index if not exists despesas_venc_idx on public.despesas (vencimento);
+
+create table if not exists public.recebimentos (
+  id uuid primary key default gen_random_uuid(),
+  data date not null,
+  semana_id uuid references public.semanas (id) on delete set null,
+  descricao text not null,
+  tipo text not null,                     -- 'Abatimento', 'Crédito anterior', 'Aporte via cartão (bruto)', 'Recebido por sócio' não entram no caixa
+  valor numeric(14, 2) not null default 0,
+  obs text,
+  criado_em timestamptz not null default now()
+);
+
+-- Acertos mensais dos motoristas (Kanban: aberto -> conferido -> pago)
+create table if not exists public.acertos (
+  id uuid primary key default gen_random_uuid(),
+  competencia date not null,              -- 1º dia do mês
+  motorista_id uuid references public.motoristas (id) on delete set null,
+  motorista_nome text,
+  fixo numeric(12, 2) not null default 0,
+  comissao numeric(12, 2),
+  media numeric(12, 2) not null default 0,
+  pernoite numeric(12, 2) not null default 0,
+  extras numeric(12, 2) not null default 0,
+  vales numeric(12, 2) not null default 0,
+  media_paga numeric(12, 2) not null default 0,
+  pagamento date,
+  status text not null default 'aberto' check (status in ('aberto', 'conferido', 'pago')),
+  obs text
+);
+
+-- Manutenção da frota (Kanban: solicitada -> em_oficina -> concluida -> paga)
+create table if not exists public.manutencoes (
+  id uuid primary key default gen_random_uuid(),
+  titulo text not null,
+  caminhao_id uuid references public.caminhoes (id) on delete set null,
+  oficina text,
+  valor numeric(14, 2),
+  status text not null default 'solicitada' check (status in ('solicitada', 'em_oficina', 'concluida', 'paga')),
+  data date not null default current_date,
+  obs text
+);
+
+-- ---------------------------------------------------------------------
+-- Funções auxiliares de permissão
+-- ---------------------------------------------------------------------
+create or replace function public.is_socio() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.perfis where id = auth.uid() and papel = 'socio');
+$$;
+
+create or replace function public.meu_motorista() returns uuid
+language sql stable security definer set search_path = public as $$
+  select motorista_id from public.perfis where id = auth.uid();
+$$;
+
+-- Novo usuário -> cria perfil. Só os e-mails da lista 'socios_iniciais' viram sócio automaticamente;
+-- todos os demais entram como motorista SEM vínculo (não veem dado nenhum) até um sócio liberar
+-- em Cadastros › Usuários. Isso impede que um estranho que se cadastre no site público veja algo.
+create or replace function public.novo_usuario() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.perfis (id, nome, email, papel)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'nome', split_part(new.email, '@', 1)), new.email,
+          case when lower(new.email) = any (array['andrergobbo@gmail.com']) then 'socio' else 'motorista' end)
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created after insert on auth.users
+  for each row execute function public.novo_usuario();
+
+-- ---------------------------------------------------------------------
+-- Row Level Security
+-- ---------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array['perfis','config','categorias','caminhoes','motoristas','tabela_fretes','semanas',
+                           'fretes','despesas','recebimentos','acertos','manutencoes'] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists socio_tudo on public.%I', t);
+    execute format('create policy socio_tudo on public.%I for all to authenticated using (public.is_socio()) with check (public.is_socio())', t);
+  end loop;
+end $$;
+
+-- Leitura geral para qualquer usuário logado (dados de referência)
+do $$
+declare t text;
+begin
+  foreach t in array array['config','categorias','caminhoes','motoristas','tabela_fretes','semanas'] loop
+    execute format('drop policy if exists leitura_logado on public.%I', t);
+    execute format('create policy leitura_logado on public.%I for select to authenticated using (true)', t);
+  end loop;
+end $$;
+
+-- Perfil: cada um vê o próprio
+drop policy if exists perfil_proprio on public.perfis;
+create policy perfil_proprio on public.perfis for select to authenticated using (id = auth.uid());
+
+-- Motorista: vê e lança as próprias viagens (não pode alterar valor de fretes já fechados)
+drop policy if exists motorista_ve_fretes on public.fretes;
+create policy motorista_ve_fretes on public.fretes for select to authenticated
+  using (motorista_id = public.meu_motorista());
+drop policy if exists motorista_lanca_fretes on public.fretes;
+create policy motorista_lanca_fretes on public.fretes for insert to authenticated
+  with check (motorista_id = public.meu_motorista() and status in ('agendado', 'em_rota', 'entregue'));
+drop policy if exists motorista_move_fretes on public.fretes;
+create policy motorista_move_fretes on public.fretes for update to authenticated
+  using (motorista_id = public.meu_motorista() and status in ('agendado', 'em_rota', 'entregue'))
+  with check (motorista_id = public.meu_motorista() and status in ('agendado', 'em_rota', 'entregue'));
+
+-- Motorista: vê o próprio acerto
+drop policy if exists motorista_ve_acerto on public.acertos;
+create policy motorista_ve_acerto on public.acertos for select to authenticated
+  using (motorista_id = public.meu_motorista());
+
+-- Tempo real (atualiza as telas de todos quando alguém lança algo)
+do $$
+declare t text;
+begin
+  foreach t in array array['fretes','despesas','recebimentos','acertos','manutencoes','semanas'] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
