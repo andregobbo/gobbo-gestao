@@ -1,0 +1,9 @@
+# Dados da empresa – NUNCA publicar (repositório é público no GitHub Pages)
+privado/
+data/demo.json
+supabase/seed.sql
+tools/origem/
+.DS_Store
+.claude/
+tools/
+supabase/seed_abastecimentos.sql
