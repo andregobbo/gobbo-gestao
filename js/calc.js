@@ -160,7 +160,7 @@ export function kmAtual(D, cam) {
 // Por caminhão no mês: km rodado, litros, km/L, custo/km, faturamento/km
 export function frotaMes(D, ym) {
   return (D.caminhoes || []).filter(c => c.situacao !== "vendido").map(c => {
-    const ab = (D.abastecimentos || []).filter(a => a.caminhao_id === c.id).sort((a, b) => n(a.km) - n(b.km));
+    const ab = (D.abastecimentos || []).filter(a => a.caminhao_id === c.id && n(a.km) > 0).sort((a, b) => n(a.km) - n(b.km));
     const doMes = ab.filter(a => noMes(a.data, ym));
     const antes = ab.filter(a => a.data < ym + "-01");
     const kmIni = antes.length ? n(antes[antes.length - 1].km) : (doMes.length ? n(doMes[0].km) : 0);
@@ -168,7 +168,7 @@ export function frotaMes(D, ym) {
     const km = Math.max(0, kmFim - kmIni);
     // litros: se não há abastecimento anterior, o primeiro do mês só "zera" o tanque
     const litros = soma(antes.length ? doMes : doMes.slice(1), a => a.litros);
-    const valorComb = soma(doMes, a => a.valor);
+    const valorComb = soma((D.abastecimentos || []).filter(a => a.caminhao_id === c.id && noMes(a.data, ym)), a => a.valor);
     const fat = soma(D.fretes.filter(f => f.caminhao_id === c.id && noMes(f.data, ym)), f => f.valor);
     const custoDireto = soma(D.despesas.filter(d => d.caminhao_id === c.id && noMes(d.competencia, ym)), d => d.valor);
     const kml = litros ? km / litros : 0;
@@ -233,4 +233,50 @@ export const CHECK_ITENS = ["Pneus e estepe", "Óleo e água", "Freios", "Luzes 
 export function csv(linhas) {
   const q = v => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   return "﻿" + linhas.map(l => l.map(q).join(";")).join("\r\n");
+}
+
+// =====================================================================
+// v3 – Bônus semanal por média km/L (sábado a sexta; paga no sábado seguinte)
+// =====================================================================
+export function faixasBonus(D) {
+  const c = (D.config || [])[0] || {};
+  return { f1: n(c.bonus_faixa1_km_l) || 3.5, v1: c.bonus_faixa1_valor ?? 150, f2: n(c.bonus_faixa2_km_l) || 3.8, v2: c.bonus_faixa2_valor ?? 200 };
+}
+export function valorBonus(D, media) {
+  const f = faixasBonus(D);
+  return media >= f.f2 ? n(f.v2) : media >= f.f1 ? n(f.v1) : 0;
+}
+export function sabadoDe(iso) { // sábado da semana de pagamento (o próprio dia, se for sábado)
+  const d = new Date(iso + "T12:00:00"); const back = (d.getDay() + 1) % 7; d.setDate(d.getDate() - back); return d.toISOString().slice(0, 10);
+}
+export function mediaSemana(D, motoristaId, sabadoPgto) {
+  const ini = addDias(sabadoPgto, -7), fim = addDias(sabadoPgto, -1);
+  const ab = (D.abastecimentos || []).filter(a => a.motorista_id === motoristaId && a.km);
+  const antes = ab.filter(a => a.data < ini).map(a => n(a.km));
+  const dentro = ab.filter(a => a.data >= ini && a.data <= fim);
+  if (!antes.length || !dentro.length) return { ini, fim, km: 0, litros: 0, media: 0, valor: 0, semDados: true };
+  const km = Math.max(...dentro.map(a => n(a.km))) - Math.max(...antes);
+  const litros = soma(dentro, a => a.litros);
+  const media = litros ? Math.round(km / litros * 100) / 100 : 0;
+  const alerta = media > 5 || media < 2 ? "Média fora do normal – confira se falta abastecimento ou KM digitado errado" : null;
+  return { ini, fim, km, litros, media, valor: alerta ? 0 : valorBonus(D, media), alerta, n: dentro.length };
+}
+export function semanasBonus(D) {
+  const ab = (D.abastecimentos || []).filter(a => a.km);
+  if (!ab.length) return [];
+  const primeiro = ab.map(a => a.data).sort()[0];
+  const out = [];
+  let sab = addDias(sabadoDe(primeiro), 7);
+  const lim = addDias(sabadoDe(hojeISO()), 7);
+  while (sab <= lim) {
+    (D.motoristas || []).filter(m => m.ativo !== false).forEach(m => {
+      const r = mediaSemana(D, m.id, sab);
+      if (r.semDados) return;
+      const reg = (D.bonus_media || []).find(b => b.semana_ini === r.ini && b.motorista_id === m.id);
+      const desp = reg?.despesa_id ? (D.despesas || []).find(d => d.id === reg.despesa_id) : null;
+      out.push({ sabado: sab, m, ...r, reg, desp, futuro: sab > hojeISO() });
+    });
+    sab = addDias(sab, 7);
+  }
+  return out.reverse();
 }

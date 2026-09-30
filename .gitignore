@@ -6,3 +6,4 @@ tools/origem/
 .DS_Store
 .claude/
 tools/
+supabase/seed_abastecimentos.sql

@@ -566,7 +566,8 @@ async function viewCad() {
     const cfg = D().config[0] || { id: "geral" };
     acoes = `<button class="btn pri" id="editCfg">Editar</button>`;
     corpo += `<div class="card"><table><tr><td>Taxa da máquina de cartão (aportes)</td><td class="num">${pct(n(cfg.taxa_cartao))}</td></tr>
-      <tr><td>Saldo inicial de caixa (01/jan)</td><td class="num">${brl(cfg.saldo_inicial)}</td></tr></table>
+      <tr><td>Saldo inicial de caixa (01/jan)</td><td class="num">${brl(cfg.saldo_inicial)}</td></tr>
+      <tr><td>Bônus de média – faixas</td><td class="num">${(() => { const f = C.faixasBonus(D()); return `≥ ${f.f1} km/L: ${brl(f.v1)} · ≥ ${f.f2} km/L: ${brl(f.v2)}`; })()}</td></tr></table>
       ${db.getModo() === "demo" ? '<p><button class="btn del" id="resetDemo">Restaurar dados da demonstração</button></p>' : ""}</div>`;
   }
   layout("cadastros", "Cadastros", corpo, acoes);
@@ -578,7 +579,10 @@ async function viewCad() {
   const ec = document.getElementById("editCfg");
   if (ec) ec.onclick = () => modal("Configurações", [
     { k: "taxa_cartao", label: "Taxa da máquina (ex.: 0.0899 = 8,99%)", type: "number" },
-    { k: "saldo_inicial", label: "Saldo inicial de caixa", type: "number" }], { ...(D().config[0] || { id: "geral" }) }, out => db.salvar("config", out));
+    { k: "saldo_inicial", label: "Saldo inicial de caixa", type: "number" },
+    { k: "bonus_faixa1_km_l", label: "Bônus faixa 1 – a partir de (km/L)", type: "number" }, { k: "bonus_faixa1_valor", label: "Bônus faixa 1 – valor (R$)", type: "number" },
+    { k: "bonus_faixa2_km_l", label: "Bônus faixa 2 – a partir de (km/L)", type: "number" }, { k: "bonus_faixa2_valor", label: "Bônus faixa 2 – valor (R$)", type: "number" }],
+    { bonus_faixa1_km_l: 3.5, bonus_faixa1_valor: 150, bonus_faixa2_km_l: 3.8, bonus_faixa2_valor: 200, ...(D().config[0] || { id: "geral" }) }, out => db.salvar("config", out));
   const rd = document.getElementById("resetDemo");
   if (rd) rd.onclick = () => { if (confirm("Voltar a demonstração aos dados originais de setembro?")) { db.reiniciarDemo(); location.reload(); } };
 }
@@ -605,7 +609,7 @@ function blocoFrotaResumo(ym) {
 }
 function viewFrota() {
   const d = D();
-  const abas = [["indicadores", "Indicadores"], ["abastecimentos", "Abastecimentos"], ["preventiva", "Preventiva"], ["checklists", "Checklists"], ["documentos", "Documentos"], ["alertas", "Alertas"]];
+  const abas = [["indicadores", "Indicadores"], ["bonus", "Bônus de média"], ["abastecimentos", "Abastecimentos"], ["preventiva", "Preventiva"], ["checklists", "Checklists"], ["documentos", "Documentos"], ["alertas", "Alertas"]];
   if (!S.frota) S.frota = "indicadores";
   let corpo = `<div class="tabs">${abas.map(([k, l]) => `<button data-k="${k}" class="${k === S.frota ? "on" : ""}">${l}</button>`).join("")}</div>`;
   let acoes = "";
@@ -617,6 +621,28 @@ function viewFrota() {
       <td class="num ${x.desvio !== null && x.desvio < -0.08 ? "neg" : ""}">${x.kml ? x.kml.toLocaleString("pt-BR", { maximumFractionDigits: 2 }) : "–"}</td><td class="num">${x.meta || "–"}</td>
       <td class="num">${brl(x.fat)}</td><td class="num">${x.km ? brl(x.fatKm) : "–"}</td><td class="num">${x.km ? brl(x.custoKm) : "–"}</td><td class="num"><b>${brl(x.fat - x.custoDireto - x.valorComb)}</b></td></tr>`).join("")}</table></div>
       <p class="muted" style="font-size:12px">Consumo fica em vermelho quando está mais de 8% abaixo da meta (referência de mercado: variação máxima de 8–10%). Cadastre a meta em Cadastros › Frota.</p></div>`;
+  } else if (S.frota === "bonus") {
+    const f = C.faixasBonus(d);
+    const sem = C.semanasBonus(d);
+    acoes = `<button class="btn ok" id="calcBonus">Calcular e lançar bônus</button>`;
+    corpo += `<div class="card" style="margin-bottom:16px"><h3>Regra do bônus semanal (sábado)</h3>
+      <div class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:0">
+      ${kpi("Abaixo de " + String(f.f1).replace(".", ",") + " km/L", "Sem bônus", "média mínima", "red")}
+      ${kpi(String(f.f1).replace(".", ",") + " a " + String((f.f2 - 0.01).toFixed(2)).replace(".", ",") + " km/L", brl(f.v1), "bônus da semana", "orange")}
+      ${kpi(String(f.f2).replace(".", ",") + " km/L ou mais", brl(f.v2), "bônus da semana", "green")}</div>
+      <p class="muted" style="font-size:12px;margin-bottom:0">Semana de sábado a sexta. Média = km rodados (hodômetro) ÷ litros abastecidos na semana. Cálculo e lançamento automáticos todo sábado às 14h
+      (o bônus entra em Despesas como “Bônus motorista – a pagar”). Faixas editáveis em Cadastros › Configurações.</p></div>
+      <div class="card"><div class="tbl-wrap"><table><tr><th>Pagamento</th><th>Semana</th><th>Motorista</th><th class="num">KM</th><th class="num">Litros</th><th class="num">Média</th><th class="num">Bônus</th><th>Situação</th></tr>
+      ${sem.map(x => `<tr><td>${dataBR(x.sabado)}</td><td>${dataBR(x.ini).slice(0, 5)} a ${dataBR(x.fim).slice(0, 5)}</td><td><b>${esc(x.m.nome)}</b></td>
+        <td class="num">${x.km.toLocaleString("pt-BR")}</td><td class="num">${x.litros.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}</td>
+        <td class="num"><b class="${x.alerta ? "neg" : x.media >= f.f2 ? "pos" : x.media < f.f1 ? "neg" : ""}">${x.media.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</b></td>
+        <td class="num"><b>${brl(x.valor)}</b></td>
+        <td>${x.alerta ? `<span class="pill r" title="${esc(x.alerta)}">conferir</span> <span class="muted" style="font-size:12px">${esc(x.alerta)}</span>`
+          : x.futuro ? '<span class="pill">semana em andamento</span>'
+          : x.desp ? `<span class="pill ${x.desp.status === "pago" ? "g" : "o"}">${x.desp.status === "pago" ? "pago" : "lançado – a pagar"}</span>`
+          : x.valor ? '<span class="pill o">a lançar</span>' : '<span class="pill">sem bônus</span>'}</td></tr>`).join("")
+        || '<tr><td colspan="8" class="empty">Registre os abastecimentos com o KM do painel para calcular as médias.</td></tr>'}</table></div>
+      <p class="muted" style="font-size:12px">Médias abaixo de 2 ou acima de 5 km/L não são lançadas automaticamente: normalmente indicam abastecimento não registrado ou KM digitado errado.</p></div>`;
   } else if (S.frota === "abastecimentos") {
     acoes = `<button class="btn pri" id="novo">+ Abastecimento</button>`;
     const ab = [...(d.abastecimentos || [])].sort((a, b) => b.data.localeCompare(a.data) || n(b.km) - n(a.km));
@@ -655,10 +681,32 @@ function viewFrota() {
   layout("frota", "Frota", corpo, acoes);
   ligarMes();
   document.querySelectorAll(".tabs button").forEach(bt => bt.onclick = () => { S.frota = bt.dataset.k; render(); });
+  const cb = document.getElementById("calcBonus");
+  if (cb) cb.onclick = () => tentar(() => lancarBonus(), "Bônus calculados e lançados");
   const nv = document.getElementById("novo");
   if (nv) nv.onclick = () => editar({ abastecimentos: "abastecimentos", preventiva: "planos_manutencao", checklists: "checklists" }[S.frota]);
   document.querySelectorAll("tr.clk[data-t]").forEach(tr => tr.onclick = () => editar(tr.dataset.t, (D()[tr.dataset.t] || []).find(x => x.id === tr.dataset.id)));
 }
+// Calcula e lança os bônus de todas as semanas já encerradas que ainda não foram lançadas
+export async function lancarBonus(ateSabado = C.sabadoDe(hoje)) {
+  if (db.getModo() === "supabase") {
+    const sabs = [...new Set(C.semanasBonus(D()).filter(x => !x.futuro && x.sabado <= ateSabado).map(x => x.sabado))];
+    for (const s of sabs) await db.rpc("calcular_bonus_media", { p_sabado: s });
+    return;
+  }
+  for (const x of C.semanasBonus(D()).filter(x => !x.futuro && x.sabado <= ateSabado)) {
+    let desp = x.desp;
+    if (!desp && x.valor > 0 && !x.alerta) {
+      desp = await db.salvar("despesas", { competencia: x.sabado, vencimento: x.sabado, categoria: "Bônus motorista",
+        descricao: `Bônus média semana ${dataBR(x.ini).slice(0, 5)}–${dataBR(x.fim).slice(0, 5)} – ${x.m.nome}`, fornecedor: x.m.nome,
+        motorista_id: x.m.id, caminhao_id: x.m.caminhao_id, forma: "PIX", valor: x.valor, status: "a_pagar",
+        obs: `Média ${x.media} km/L (${x.km} km / ${x.litros} L)` });
+    }
+    await db.salvar("bonus_media", { id: x.reg?.id, semana_ini: x.ini, semana_fim: x.fim, motorista_id: x.m.id, caminhao_id: x.m.caminhao_id,
+      km: x.km, litros: x.litros, media: x.media, valor: x.valor, despesa_id: desp?.id || null, alerta: x.alerta || null });
+  }
+}
+
 function viewDiario() {
   const d = D(), mid = S.perfil?.motorista_id;
   const meusAb = (d.abastecimentos || []).filter(a => a.motorista_id === mid).sort((a, b) => b.data.localeCompare(a.data)).slice(0, 5);
@@ -671,6 +719,10 @@ function viewDiario() {
       ${bigBtn("bCheck", feitoHoje ? "✅" : "📋", "Checklist do caminhão", feitoHoje ? "já feito hoje – pode refazer" : "faça antes de sair", feitoHoje ? "" : "ok")}
       ${bigBtn("bAbast", "⛽", "Registrar abastecimento", "KM do painel, litros e valor", "")}
       ${bigBtn("bAcerto", "💰", "Meu acerto", "fixo, comissão, média e saldo", "")}</div>
+    ${(() => { const sb = C.semanasBonus(d).filter(x => x.m.id === mid).slice(0, 4); const f = C.faixasBonus(d);
+      return `<div class="card" style="margin-bottom:16px"><h3>Minha média de consumo (bônus de sábado)</h3>
+      <p class="muted" style="margin-top:0;font-size:13px">Abaixo de ${String(f.f1).replace(".", ",")} km/L: sem bônus · ${String(f.f1).replace(".", ",")}–${String((f.f2 - 0.01).toFixed(2)).replace(".", ",")}: ${brl(f.v1)} · ${String(f.f2).replace(".", ",")} ou mais: ${brl(f.v2)}</p>
+      ${sb.map(x => `<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>${dataBR(x.ini).slice(0, 5)} a ${dataBR(x.fim).slice(0, 5)}${x.futuro ? " (parcial)" : ""}</span><span><b>${x.media.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} km/L</b> · ${brl(x.valor)}</span></div>`).join("") || '<p class="muted">Registre os abastecimentos com o KM do painel.</p>'}</div>`; })()}
     <div class="grid g2"><div class="card"><h3>Meus últimos abastecimentos</h3>${meusAb.map(a => `<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>${dataBR(a.data)} · ${n(a.km).toLocaleString("pt-BR")} km</span><b>${n(a.litros).toLocaleString("pt-BR")} L</b></div>`).join("") || '<p class="muted">Nenhum ainda.</p>'}</div>
     <div class="card"><h3>Meus últimos checklists</h3>${meusCk.map(c => `<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>${dataBR(c.data)}</span><span class="pill ${c.status === "atencao" ? "r" : "g"}">${c.status === "atencao" ? "atenção" : "ok"}</span></div>`).join("") || '<p class="muted">Nenhum ainda.</p>'}</div></div>`
     : '<div class="card empty">Seu usuário ainda não foi vinculado a um motorista. Peça a um sócio.</div>';
@@ -751,9 +803,17 @@ async function iniciar() {
     await db.iniciarSupabase();
     db.aoMudar(() => { if (!document.querySelector(".modal")) render(); });
     render();
+    autoBonus();
   } catch (e) {
     telaLogin("Sem conexão com o servidor: " + e.message);
   }
+}
+
+async function autoBonus() {
+  const agora = new Date();
+  if (!socio() || agora.getDay() !== 6 || agora.getHours() < 14) return;
+  const pend = C.semanasBonus(D()).filter(x => !x.futuro && x.sabado === C.sabadoDe(hoje) && x.valor > 0 && !x.alerta && !x.desp);
+  if (pend.length) await tentar(() => lancarBonus(), `Bônus de média da semana lançados (${pend.length})`);
 }
 
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});

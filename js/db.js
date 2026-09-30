@@ -2,7 +2,7 @@
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 export const TABELAS = ["config", "categorias", "caminhoes", "motoristas", "tabela_fretes", "semanas",
-  "fretes", "despesas", "recebimentos", "acertos", "manutencoes", "abastecimentos", "planos_manutencao", "checklists"];
+  "fretes", "despesas", "recebimentos", "acertos", "manutencoes", "abastecimentos", "planos_manutencao", "checklists", "bonus_media"];
 
 const DEMO_KEY = "gobbo_demo_v1";
 let sb = null;
@@ -168,4 +168,12 @@ export async function bancoPronto() {
     const { error } = await cli.from("config").select("id").limit(1);
     return !error;
   } catch { return false; }
+}
+
+export async function rpc(fn, args = {}) {
+  const cli = await supabase();
+  const { data, error } = await cli.rpc(fn, args);
+  if (error) throw new Error(error.message);
+  await recarregar();
+  return data;
 }

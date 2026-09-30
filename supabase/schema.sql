@@ -325,3 +325,82 @@ drop policy if exists motorista_check on public.checklists;
 create policy motorista_check on public.checklists for select to authenticated using (motorista_id = public.meu_motorista());
 drop policy if exists motorista_check_ins on public.checklists;
 create policy motorista_check_ins on public.checklists for insert to authenticated with check (motorista_id = public.meu_motorista());
+
+-- =====================================================================
+-- v3 – Bônus semanal por média de consumo (km/L)
+-- Regra: média < 3,50 = sem bônus; 3,50–3,79 = R$150; >= 3,80 = R$200.
+-- Semana = sábado a sexta; cálculo e lançamento automáticos no sábado ~14h (Brasília).
+-- =====================================================================
+alter table public.config add column if not exists bonus_faixa1_km_l numeric(5, 2) not null default 3.50;
+alter table public.config add column if not exists bonus_faixa1_valor numeric(10, 2) not null default 150;
+alter table public.config add column if not exists bonus_faixa2_km_l numeric(5, 2) not null default 3.80;
+alter table public.config add column if not exists bonus_faixa2_valor numeric(10, 2) not null default 200;
+
+create table if not exists public.bonus_media (
+  id uuid primary key default gen_random_uuid(),
+  semana_ini date not null,               -- sábado
+  semana_fim date not null,               -- sexta
+  motorista_id uuid references public.motoristas (id) on delete set null,
+  caminhao_id uuid references public.caminhoes (id) on delete set null,
+  km numeric(10, 1),
+  litros numeric(10, 2),
+  media numeric(6, 2),
+  valor numeric(10, 2) not null default 0,
+  despesa_id uuid references public.despesas (id) on delete set null,
+  alerta text,
+  calculado_em timestamptz not null default now(),
+  unique (semana_ini, motorista_id)
+);
+alter table public.bonus_media enable row level security;
+drop policy if exists socio_tudo on public.bonus_media;
+create policy socio_tudo on public.bonus_media for all to authenticated using (public.is_socio()) with check (public.is_socio());
+drop policy if exists motorista_ve_bonus on public.bonus_media;
+create policy motorista_ve_bonus on public.bonus_media for select to authenticated using (motorista_id = public.meu_motorista());
+
+-- Calcula a média da semana (sábado anterior até sexta) de cada motorista e lança o bônus como despesa "a pagar".
+create or replace function public.calcular_bonus_media(p_sabado date default null)
+returns setof public.bonus_media language plpgsql security definer set search_path = public as $$
+declare
+  v_sab date := coalesce(p_sabado, (now() at time zone 'America/Sao_Paulo')::date);
+  v_ini date; v_fim date; m record; cfg record;
+  v_km numeric; v_l numeric; v_media numeric; v_val numeric; v_ant int; v_ult int; v_desp uuid; v_alerta text;
+begin
+  v_sab := v_sab - ((extract(dow from v_sab)::int + 1) % 7); -- ajusta para o sábado da data (dow 6 = sábado)
+  v_ini := v_sab - 7; v_fim := v_sab - 1;
+  select * into cfg from public.config limit 1;
+  for m in select * from public.motoristas where ativo loop
+    select max(km) into v_ant from public.abastecimentos a where a.motorista_id = m.id and a.data < v_ini;
+    select max(km), sum(litros) into v_ult, v_l from public.abastecimentos a where a.motorista_id = m.id and a.data between v_ini and v_fim;
+    continue when v_ult is null or v_ant is null or coalesce(v_l, 0) = 0;
+    v_km := v_ult - v_ant; v_media := round(v_km / v_l, 2);
+    v_val := case when v_media >= cfg.bonus_faixa2_km_l then cfg.bonus_faixa2_valor
+                  when v_media >= cfg.bonus_faixa1_km_l then cfg.bonus_faixa1_valor else 0 end;
+    v_alerta := case when v_media > 5 or v_media < 2 then 'Média fora do normal – confira se falta abastecimento ou KM digitado errado' end;
+    v_desp := null;
+    if v_val > 0 and v_alerta is null
+       and not exists (select 1 from public.bonus_media b where b.semana_ini = v_ini and b.motorista_id = m.id and b.despesa_id is not null) then
+      insert into public.despesas (competencia, vencimento, categoria, descricao, fornecedor, motorista_id, caminhao_id, forma, valor, status, obs)
+      values (v_sab, v_sab, 'Bônus motorista', 'Bônus média semana ' || to_char(v_ini, 'DD/MM') || '–' || to_char(v_fim, 'DD/MM') || ' – ' || m.nome,
+              m.nome, m.id, m.caminhao_id, 'PIX', v_val, 'a_pagar', 'Média ' || v_media || ' km/L (' || v_km || ' km / ' || v_l || ' L) – automático')
+      returning id into v_desp;
+    end if;
+    insert into public.bonus_media (semana_ini, semana_fim, motorista_id, caminhao_id, km, litros, media, valor, despesa_id, alerta)
+    values (v_ini, v_fim, m.id, m.caminhao_id, v_km, v_l, v_media, v_val, v_desp, v_alerta)
+    on conflict (semana_ini, motorista_id) do update set km = excluded.km, litros = excluded.litros, media = excluded.media,
+      valor = excluded.valor, alerta = excluded.alerta, calculado_em = now(),
+      despesa_id = coalesce(public.bonus_media.despesa_id, excluded.despesa_id);
+  end loop;
+  return query select * from public.bonus_media where semana_ini = v_ini;
+end $$;
+grant execute on function public.calcular_bonus_media(date) to authenticated;
+
+-- Agendamento: todo sábado às 14h de Brasília (17h UTC). Requer a extensão pg_cron
+-- (Supabase › Database › Extensions › pg_cron › Enable). Se ainda não estiver ativa, este bloco só avisa.
+do $$
+begin
+  create extension if not exists pg_cron;
+  perform cron.unschedule(jobid) from cron.job where jobname = 'bonus_media_sabado';
+  perform cron.schedule('bonus_media_sabado', '0 17 * * 6', 'select public.calcular_bonus_media()');
+exception when others then
+  raise notice 'pg_cron indisponível – ative a extensão pg_cron e rode este bloco de novo (%).', sqlerrm;
+end $$;
