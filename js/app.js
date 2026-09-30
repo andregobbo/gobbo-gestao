@@ -17,9 +17,11 @@ const numBR = v => {
   if (v === null || v === undefined || String(v).trim() === "") return null;
   let t = String(v).trim().replace(/[R$\s]/g, "");
   if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ""); // "99.500" = 99500 (milhar)
   const x = Number(t);
   return isFinite(x) ? x : null;
 };
+const meuCaminhao = () => D().motoristas?.find(m => m.id === S.perfil?.motorista_id)?.caminhao_id || "";
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const D = () => db.dados();
 const socio = () => db.getModo() === "demo" || S.perfil?.papel === "socio";
@@ -55,6 +57,12 @@ function campo(f, obj) {
   let inp;
   if (f.type === "select") inp = `<select id="${id}" name="${f.k}">${opts(typeof f.opts === "function" ? f.opts() : f.opts, v, !f.required)}</select>`;
   else if (f.type === "textarea") inp = `<textarea id="${id}" name="${f.k}">${esc(v)}</textarea>`;
+  else if (f.type === "checks") {
+    const itens = v || {};
+    inp = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px">${f.opts.map(it => `<label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--ink);font-size:14px;border:1px solid var(--line);border-radius:10px;padding:8px 10px">
+      <input type="checkbox" name="chk" value="${esc(it)}" ${itens[it] !== false ? "checked" : ""} style="width:20px;height:20px">${esc(it)}</label>`).join("")}</div>
+      <span class="muted" style="font-size:12px">Desmarque o que estiver com problema.</span>`;
+  }
   else inp = `<input id="${id}" name="${f.k}" type="${f.type === "number" ? "text" : (f.type || "text")}" ${f.type === "number" ? 'inputmode="decimal" autocomplete="off"' : ""} value="${esc(f.type === "number" && v !== null && v !== undefined && v !== "" ? String(v).replace(".", ",") : v)}" ${f.list ? `list="dl_${f.k}"` : ""} ${f.required ? "required" : ""}>`
     + (f.list ? `<datalist id="dl_${f.k}">${f.list().map(x => `<option value="${esc(x)}">`).join("")}</datalist>` : "");
   return `<div class="fld ${f.full ? "full" : ""}"><label for="${id}">${esc(f.label)}</label>${inp}</div>`;
@@ -81,6 +89,7 @@ function modal(titulo, campos, obj, onSave, onDel) {
     campos.forEach(f => {
       let v = fd.get(f.k);
       if (f.type === "number") v = numBR(v);
+      if (f.type === "checks") { const ok = fd.getAll("chk"); v = Object.fromEntries(f.opts.map(it => [it, ok.includes(it)])); }
       out[f.k] = v === "" ? null : v;
     });
     const falta = campos.find(f => f.required && (out[f.k] === null || out[f.k] === undefined));
@@ -163,7 +172,7 @@ const FORM = {
     { k: "nome", label: "Identificação", required: true }, { k: "modelo", label: "Modelo" },
     { k: "placa", label: "Placa" }, { k: "ano", label: "Ano", type: "number" },
     { k: "situacao", label: "Situação", type: "select", required: true, opts: [["ativo", "Ativo"], ["parado", "Parado"], ["vendido", "Vendido"]] },
-    { k: "km", label: "KM atual", type: "number" },
+    { k: "km", label: "KM atual", type: "number" }, { k: "meta_km_l", label: "Meta de consumo (km/L)", type: "number" },
     { k: "venc_seguro", label: "Vencimento do seguro", type: "date" }, { k: "venc_licenciamento", label: "Vencimento licenciamento", type: "date" },
     { k: "obs", label: "Observação", type: "textarea", full: true },
   ],
@@ -184,7 +193,36 @@ const FORM = {
     { k: "ordem", label: "Ordem", type: "number" },
   ],
 };
-const TITULO = { fretes: "Frete", despesas: "Despesa / conta", recebimentos: "Recebimento", manutencoes: "Manutenção", acertos: "Acerto do motorista",
+Object.assign(FORM, {
+  abastecimentos: () => [
+    { k: "data", label: "Data", type: "date", required: true },
+    { k: "caminhao_id", label: "Caminhão", type: "select", opts: camOpts, required: true },
+    { k: "km", label: "KM do painel (odômetro)", type: "number", required: true },
+    { k: "litros", label: "Litros", type: "number", required: true },
+    { k: "valor", label: "Valor total (R$)", type: "number" },
+    { k: "posto", label: "Posto", list: () => [...new Set((D().abastecimentos || []).map(a => a.posto).filter(Boolean))] },
+    ...(socio() ? [{ k: "motorista_id", label: "Motorista", type: "select", opts: motOpts }] : []),
+    { k: "tanque_cheio", label: "Completou o tanque?", type: "select", required: true, opts: [["true", "Sim"], ["false", "Não"]] },
+    { k: "obs", label: "Observação", type: "textarea", full: true },
+  ],
+  planos_manutencao: () => [
+    { k: "caminhao_id", label: "Caminhão", type: "select", opts: camOpts, required: true },
+    { k: "item", label: "Item (ex.: troca de óleo e filtros)", required: true, list: () => ["Troca de óleo e filtros", "Filtro de ar", "Filtro de combustível", "Revisão de freios", "Alinhamento e balanceamento", "Rodízio de pneus", "Tacógrafo (aferição)", "Graxa / lubrificação", "Correias", "Arrefecimento"] },
+    { k: "intervalo_km", label: "A cada (km)", type: "number" }, { k: "intervalo_dias", label: "Ou a cada (dias)", type: "number" },
+    { k: "ultimo_km", label: "Feito pela última vez no km", type: "number" }, { k: "ultima_data", label: "Última vez em", type: "date" },
+    { k: "obs", label: "Observação", type: "textarea", full: true },
+  ],
+  checklists: () => [
+    { k: "data", label: "Data", type: "date", required: true },
+    { k: "caminhao_id", label: "Caminhão", type: "select", opts: camOpts, required: true },
+    { k: "km", label: "KM do painel", type: "number" },
+    ...(socio() ? [{ k: "motorista_id", label: "Motorista", type: "select", opts: motOpts },
+      { k: "status", label: "Situação", type: "select", opts: [["ok", "OK"], ["atencao", "Atenção"], ["resolvido", "Resolvido"]] }] : []),
+    { k: "itens", label: "Itens verificados", type: "checks", opts: C.CHECK_ITENS, full: true },
+    { k: "problemas", label: "Problemas / observações", type: "textarea", full: true },
+  ],
+});
+const TITULO = { abastecimentos: "Abastecimento", planos_manutencao: "Plano de manutenção preventiva", checklists: "Checklist do caminhão", fretes: "Frete", despesas: "Despesa / conta", recebimentos: "Recebimento", manutencoes: "Manutenção", acertos: "Acerto do motorista",
   motoristas: "Motorista", caminhoes: "Caminhão", semanas: "Semana de fechamento", tabela_fretes: "Cidade (tabela de fretes)", categorias: "Categoria" };
 const NOVO = {
   fretes: () => ({ data: hoje, status: "agendado", tipo: "Entrega", motorista_id: S.perfil?.motorista_id || "" }),
@@ -194,15 +232,25 @@ const NOVO = {
   acertos: () => ({ competencia: S.ym + "-01", status: "aberto", fixo: 3500 }),
   motoristas: () => ({ fixo: 3500, media_ref: 200, ativo: "true" }),
   caminhoes: () => ({ situacao: "ativo" }),
+  abastecimentos: () => ({ data: hoje, tanque_cheio: "true", motorista_id: S.perfil?.motorista_id || "", caminhao_id: meuCaminhao() }),
+  planos_manutencao: () => ({ ultima_data: hoje }),
+  checklists: () => ({ data: hoje, itens: {}, caminhao_id: meuCaminhao(), status: "ok" }),
   semanas: () => ({ status: "aberta" }), tabela_fretes: () => ({}), categorias: () => ({ grupo: C.GRUPOS[1], ordem: 99 }),
 };
 export function editar(tabela, reg) {
   const obj = reg ? { ...reg } : NOVO[tabela]();
   if (tabela === "motoristas" && obj.ativo !== undefined) obj.ativo = String(obj.ativo);
-  const podeEditar = socio() || (tabela === "fretes" && (!reg || ["agendado", "em_rota", "entregue"].includes(reg.status)));
+  const podeEditar = socio() || (tabela === "fretes" && (!reg || ["agendado", "em_rota", "entregue"].includes(reg.status))) || (!reg && ["abastecimentos", "checklists"].includes(tabela));
   if (!podeEditar) return toast("Somente sócios podem alterar este registro.", true);
   modal((reg ? "Editar " : "Novo ") + TITULO[tabela].toLowerCase(), FORM[tabela](), obj, async out => {
     if (tabela === "motoristas") out.ativo = out.ativo === "true";
+    if (tabela === "abastecimentos") { out.tanque_cheio = out.tanque_cheio !== "false"; if (!socio()) out.motorista_id = S.perfil?.motorista_id;
+      const ult = (D().abastecimentos || []).filter(a => a.caminhao_id === out.caminhao_id && a.id !== out.id).sort((a, b) => n(b.km) - n(a.km))[0];
+      if (ult && n(out.km) < n(ult.km) && !confirm(`O KM informado (${out.km}) é menor que o último registrado (${ult.km}). Salvar mesmo assim?`)) throw new Error("Confira o KM"); }
+    if (tabela === "checklists") { if (!socio()) out.motorista_id = S.perfil?.motorista_id;
+      const falhas = Object.entries(out.itens || {}).filter(([, ok]) => !ok).map(([k]) => k);
+      if (!socio() || !reg) out.status = falhas.length || out.problemas ? "atencao" : "ok";
+      if (falhas.length) out.problemas = ["Com problema: " + falhas.join(", "), out.problemas].filter(Boolean).join(". "); }
     if (tabela === "fretes") {
       if (!socio()) out.motorista_id = S.perfil?.motorista_id;
       if (!out.caminhao_id) out.caminhao_id = D().motoristas.find(m => m.id === out.motorista_id)?.caminhao_id || null;
@@ -216,9 +264,9 @@ export function editar(tabela, reg) {
 // ---------------- layout ----------------
 const MENU_SOCIO = [
   ["painel", "📊", "Painel"], ["kanban", "🗂️", "Kanban"], ["lancamentos", "🧾", "Lançamentos"],
-  ["relatorios", "📈", "Relatórios"], ["cadastros", "⚙️", "Cadastros"],
+  ["frota", "🚛", "Frota"], ["relatorios", "📈", "Relatórios"], ["cadastros", "⚙️", "Cadastros"],
 ];
-const MENU_MOT = [["kanban", "🗂️", "Minhas viagens"], ["acerto", "💰", "Meu acerto"]];
+const MENU_MOT = [["kanban", "🗂️", "Minhas viagens"], ["diario", "✅", "Diário de bordo"], ["acerto", "💰", "Meu acerto"]];
 function layout(rota, titulo, corpo, acoes = "") {
   const menu = socio() ? MENU_SOCIO : MENU_MOT;
   root.innerHTML = `<div class="app">
@@ -267,6 +315,8 @@ function viewPainel() {
     ${kpi("A receber", brl(r.aReceber), "saldo dos fechamentos", "orange")}
     ${kpi("A pagar", brl(r.aPagar), `<span class="${r.vencidas ? "neg" : ""}">${brl(r.vencidas)} vencidas</span> · ${brl0(r.prox7)} em 7 dias`, "navy")}
   </div>
+  ${blocoAlertas(6)}
+  ${blocoFrotaResumo(S.ym)}
   <div class="grid g2">
     <div class="card"><h3>Faturamento × despesas acumulados</h3><div class="chart-box"><canvas id="cAcum"></canvas></div></div>
     <div class="card"><h3>Despesas por grupo</h3><div class="chart-box"><canvas id="cGrupo"></canvas></div></div>
@@ -300,7 +350,7 @@ const BOARDS = {
 function itensBoard(k) {
   const d = D();
   if (k === "fretes") return d.fretes.filter(f => C.noMes(f.data, S.ym) || ["agendado", "em_rota"].includes(f.status))
-    .filter(f => socio() || f.motorista_id === S.perfil?.motorista_id)
+    .filter(f => socio() ? (!S.fMot || f.motorista_id === S.fMot) : f.motorista_id === S.perfil?.motorista_id)
     .sort((a, b) => a.data.localeCompare(b.data)).map(f => ({ id: f.id, col: f.status, valor: n(f.valor), reg: f,
       cls: nomeMot(f.motorista_id) === "Silvestre" ? "silvestre" : "sergio",
       l1: f.cliente, l2: [dataBR(f.data), nomeMot(f.motorista_id), f.cidade, f.tipo !== "Entrega" ? f.tipo : ""] }));
@@ -335,7 +385,9 @@ function viewKanban() {
   ${S.kanban === "fretes" ? "Mostra os fretes do mês escolhido e os agendados/em rota." : S.kanban === "contas" ? "Ao soltar em “Paga”, a conta é baixada com a data de hoje." : ""}</p>`;
   const tabelaNovo = b.tabela;
   layout("kanban", socio() ? "Kanban – " + b.titulo : "Minhas viagens", corpo,
-    (S.kanban === "fretes" || S.kanban === "contas" ? seletorMes() : "") + `<button class="btn pri" id="novo">+ Novo</button>`);
+    (S.kanban === "fretes" && socio() ? `<select class="sel" id="fMot" aria-label="Motorista"><option value="">Todos os motoristas</option>${opts(motOpts(), S.fMot, false)}</select>` : "")
+    + (S.kanban === "fretes" || S.kanban === "contas" ? seletorMes() : "") + `<button class="btn pri" id="novo">+ Novo</button>`);
+  const fm = document.getElementById("fMot"); if (fm) fm.onchange = () => { S.fMot = fm.value; render(); };
   ligarMes();
   document.querySelectorAll(".tabs button").forEach(bt => bt.onclick = () => { S.kanban = bt.dataset.k; render(); });
   document.getElementById("novo").onclick = () => editar(tabelaNovo);
@@ -386,7 +438,11 @@ function viewLanc() {
   <div class="card"><div class="tbl-wrap"><table><tr>${L.cols.map((c, i) => `<th class="${i === L.cols.length - 1 ? "num" : ""}">${c}</th>`).join("")}</tr>
   ${rows.map(r => `<tr class="clk" data-id="${r.id}">${L.cells(r).map((c, i, a) => `<td class="${i === a.length - 1 ? "num" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${L.cols.length}" class="empty">Nada lançado neste mês.</td></tr>`}
   <tr class="tot"><td colspan="${L.cols.length - 1}">${rows.length} lançamentos</td><td class="num">${brl(soma(rows, L.val))}</td></tr></table></div></div>`;
-  layout("lancamentos", "Lançamentos – " + mesLabel(S.ym), corpo, seletorMes() + `<button class="btn pri" id="novo">+ Novo</button>`);
+  layout("lancamentos", "Lançamentos – " + mesLabel(S.ym), corpo, seletorMes() + `<button class="btn" id="csv" title="Planilha para o contador">⬇ Exportar</button><button class="btn pri" id="novo">+ Novo</button>`);
+  document.getElementById("csv").onclick = () => {
+    const blob = new Blob([C.csv([L.cols, ...rows.map(r => L.cells(r).map((c, i, a) => (i === a.length - 1 ? n(L.val(r)).toFixed(2).replace(".", ",") : c)))])], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `gobbo-${S.lanc}-${S.ym}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  };
   ligarMes();
   document.querySelectorAll(".tabs button").forEach(bt => bt.onclick = () => { S.lanc = bt.dataset.k; S.busca = ""; render(); });
   const bi = document.getElementById("busca");
@@ -527,12 +583,109 @@ async function viewCad() {
   if (rd) rd.onclick = () => { if (confirm("Voltar a demonstração aos dados originais de setembro?")) { db.reiniciarDemo(); location.reload(); } };
 }
 
+// ---------------- ALERTAS / FROTA ----------------
+function blocoAlertas(max = 99) {
+  const al = C.alertas(D());
+  if (!al.length) return `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--green)"><b class="pos">✓ Nenhum alerta no momento.</b></div>`;
+  const cor = { alto: "r", medio: "o", info: "" }, rot = { alto: "urgente", medio: "atenção", info: "info" };
+  return `<div class="card" style="margin-bottom:16px"><h3>Central de alertas <span class="muted" style="font-weight:500">(${al.length})</span></h3>
+    <div style="display:flex;flex-direction:column;gap:6px">${al.slice(0, max).map(a => `<a href="#${a.rota}" style="text-decoration:none;color:inherit;display:flex;gap:8px;align-items:center">
+    <span class="pill ${cor[a.nivel]}" style="min-width:70px;text-align:center">${rot[a.nivel]}</span><span>${esc(a.texto)}</span></a>`).join("")}
+    ${al.length > max ? `<a href="#frota" class="muted" style="font-size:13px">ver todos os ${al.length} alertas →</a>` : ""}</div></div>`;
+}
+function blocoFrotaResumo(ym) {
+  const fr = C.frotaMes(D(), ym).filter(x => x.km > 0); // só caminhões com km medido no mês
+  const km = soma(fr, x => x.km);
+  if (!km) return `<div class="card" style="margin-bottom:16px"><h3>Indicadores da frota</h3><p class="muted" style="margin:0">Registre os abastecimentos (com o KM do painel) para ver <b>custo por km</b>, <b>consumo km/L</b> e <b>faturamento por km</b> de cada caminhão — os principais indicadores usados pelas transportadoras. <a href="#frota">Ir para Frota →</a></p></div>`;
+  return `<div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+    ${kpi("KM rodados", km.toLocaleString("pt-BR"), fr.map(x => x.c.nome.split(" ")[0] + " " + x.km.toLocaleString("pt-BR")).join(" · "))}
+    ${kpi("Consumo médio", (soma(fr, x => x.litros) ? (km / soma(fr, x => x.litros)).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) : "–") + " km/L", soma(fr, x => x.litros).toLocaleString("pt-BR") + " litros", "green")}
+    ${kpi("Custo por km", brl(soma(fr, x => x.custoDireto + x.valorComb) / km), "custos diretos + combustível", "red")}
+    ${kpi("Faturamento por km", brl(soma(fr, x => x.fat) / km), "receita ÷ km", "navy")}</div>`;
+}
+function viewFrota() {
+  const d = D();
+  const abas = [["indicadores", "Indicadores"], ["abastecimentos", "Abastecimentos"], ["preventiva", "Preventiva"], ["checklists", "Checklists"], ["documentos", "Documentos"], ["alertas", "Alertas"]];
+  if (!S.frota) S.frota = "indicadores";
+  let corpo = `<div class="tabs">${abas.map(([k, l]) => `<button data-k="${k}" class="${k === S.frota ? "on" : ""}">${l}</button>`).join("")}</div>`;
+  let acoes = "";
+  if (S.frota === "indicadores") {
+    acoes = seletorMes();
+    const fr = C.frotaMes(d, S.ym);
+    corpo += blocoFrotaResumo(S.ym) + `<div class="card"><h3>Por caminhão – ${mesLabel(S.ym)}</h3><div class="tbl-wrap"><table><tr><th>Caminhão</th><th class="num">KM</th><th class="num">Litros</th><th class="num">km/L</th><th class="num">Meta</th><th class="num">Faturamento</th><th class="num">Fat./km</th><th class="num">Custo/km</th><th class="num">Resultado direto</th></tr>
+      ${fr.map(x => `<tr><td><b>${esc(x.c.nome)}</b></td><td class="num">${x.km.toLocaleString("pt-BR")}</td><td class="num">${x.litros.toLocaleString("pt-BR")}</td>
+      <td class="num ${x.desvio !== null && x.desvio < -0.08 ? "neg" : ""}">${x.kml ? x.kml.toLocaleString("pt-BR", { maximumFractionDigits: 2 }) : "–"}</td><td class="num">${x.meta || "–"}</td>
+      <td class="num">${brl(x.fat)}</td><td class="num">${x.km ? brl(x.fatKm) : "–"}</td><td class="num">${x.km ? brl(x.custoKm) : "–"}</td><td class="num"><b>${brl(x.fat - x.custoDireto - x.valorComb)}</b></td></tr>`).join("")}</table></div>
+      <p class="muted" style="font-size:12px">Consumo fica em vermelho quando está mais de 8% abaixo da meta (referência de mercado: variação máxima de 8–10%). Cadastre a meta em Cadastros › Frota.</p></div>`;
+  } else if (S.frota === "abastecimentos") {
+    acoes = `<button class="btn pri" id="novo">+ Abastecimento</button>`;
+    const ab = [...(d.abastecimentos || [])].sort((a, b) => b.data.localeCompare(a.data) || n(b.km) - n(a.km));
+    corpo += `<div class="card"><div class="tbl-wrap"><table><tr><th>Data</th><th>Caminhão</th><th>Motorista</th><th class="num">KM</th><th class="num">Litros</th><th class="num">km/L</th><th class="num">Valor</th><th>Posto</th></tr>
+      ${ab.map(a => { const prev = ab.find(x => x.caminhao_id === a.caminhao_id && n(x.km) < n(a.km)); const kml = prev && n(a.litros) ? (n(a.km) - n(prev.km)) / n(a.litros) : null;
+        return `<tr class="clk" data-t="abastecimentos" data-id="${a.id}"><td>${dataBR(a.data)}</td><td>${esc(nomeCam(a.caminhao_id))}</td><td>${esc(nomeMot(a.motorista_id))}</td><td class="num">${n(a.km).toLocaleString("pt-BR")}</td>
+        <td class="num">${n(a.litros).toLocaleString("pt-BR")}</td><td class="num">${kml ? kml.toLocaleString("pt-BR", { maximumFractionDigits: 2 }) : "–"}</td><td class="num">${brl(a.valor)}</td><td>${esc(a.posto)}</td></tr>`; }).join("")
+        || '<tr><td colspan="8" class="empty">Nenhum abastecimento registrado. O motorista pode lançar pelo celular em “Diário de bordo”.</td></tr>'}</table></div>
+      <p class="muted" style="font-size:12px">Registro operacional para medir consumo. O valor financeiro do diesel continua entrando pelo acerto do posto em Despesas (evita contar em dobro).</p></div>`;
+  } else if (S.frota === "preventiva") {
+    acoes = `<button class="btn pri" id="novo">+ Item preventivo</button>`;
+    const pl = (d.planos_manutencao || []).map(p => ({ p, s: C.statusPlano(d, p) })).sort((a, b) => ({ vencida: 0, proxima: 1, ok: 2 }[a.s.st] - { vencida: 0, proxima: 1, ok: 2 }[b.s.st]));
+    corpo += `<div class="card"><div class="tbl-wrap"><table><tr><th>Situação</th><th>Caminhão</th><th>Item</th><th class="num">KM atual</th><th class="num">Próxima (km)</th><th class="num">Faltam km</th><th>Próxima (data)</th></tr>
+      ${pl.map(({ p, s: st }) => `<tr class="clk" data-t="planos_manutencao" data-id="${p.id}"><td><span class="pill ${st.st === "vencida" ? "r" : st.st === "proxima" ? "o" : "g"}">${st.st === "ok" ? "em dia" : st.st}</span></td>
+        <td>${esc(st.cam?.nome || "")}</td><td><b>${esc(p.item)}</b></td><td class="num">${st.km ? st.km.toLocaleString("pt-BR") : "–"}</td><td class="num">${st.proxKm ? st.proxKm.toLocaleString("pt-BR") : "–"}</td>
+        <td class="num ${st.faltaKm !== null && st.faltaKm <= 0 ? "neg" : ""}">${st.faltaKm !== null ? st.faltaKm.toLocaleString("pt-BR") : "–"}</td><td>${dataBR(st.proxData)}</td></tr>`).join("")
+        || '<tr><td colspan="7" class="empty">Cadastre os itens de manutenção preventiva (ex.: troca de óleo a cada 20.000 km) para receber alertas antes de vencer.</td></tr>'}</table></div>
+      <p class="muted" style="font-size:12px">O KM atual vem do último abastecimento ou checklist. Ao fazer o serviço, edite o item e atualize “feito pela última vez”. O andamento do serviço fica no Kanban de Manutenção.</p></div>`;
+  } else if (S.frota === "checklists") {
+    acoes = `<button class="btn pri" id="novo">+ Checklist</button>`;
+    const ck = [...(d.checklists || [])].sort((a, b) => b.data.localeCompare(a.data));
+    corpo += `<div class="card"><div class="tbl-wrap"><table><tr><th>Data</th><th>Caminhão</th><th>Motorista</th><th>Situação</th><th>Problemas</th></tr>
+      ${ck.map(c => `<tr class="clk" data-t="checklists" data-id="${c.id}"><td>${dataBR(c.data)}</td><td>${esc(nomeCam(c.caminhao_id))}</td><td>${esc(nomeMot(c.motorista_id))}</td>
+        <td><span class="pill ${c.status === "atencao" ? "r" : "g"}">${c.status === "atencao" ? "atenção" : c.status}</span></td><td>${esc(c.problemas || "")}</td></tr>`).join("")
+        || '<tr><td colspan="5" class="empty">Nenhum checklist ainda. O motorista faz pelo celular antes de sair (“Diário de bordo”).</td></tr>'}</table></div></div>`;
+  } else if (S.frota === "documentos") {
+    const hj = hoje;
+    corpo += `<div class="card"><div class="tbl-wrap"><table><tr><th>Caminhão</th><th>Placa</th><th>Situação</th><th>Seguro</th><th>Licenciamento</th><th class="num">KM atual</th></tr>
+      ${d.caminhoes.map(c => { const cel = v => !v ? '<span class="pill o">sem data</span>' : `<span class="pill ${v < hj ? "r" : v <= C.addDias(hj, 30) ? "o" : "g"}">${dataBR(v)}</span>`;
+        return `<tr class="clk" data-t="caminhoes" data-id="${c.id}"><td><b>${esc(c.nome)}</b></td><td>${esc(c.placa || "")}</td><td>${esc(c.situacao)}</td><td>${c.situacao === "vendido" ? "–" : cel(c.venc_seguro)}</td>
+        <td>${c.situacao === "vendido" ? "–" : cel(c.venc_licenciamento)}</td><td class="num">${C.kmAtual(d, c).toLocaleString("pt-BR") || "–"}</td></tr>`; }).join("")}</table></div>
+      <p class="muted" style="font-size:12px">Toque no caminhão para cadastrar vencimentos, placa e meta de consumo. Alertas 30 dias antes.</p></div>`;
+  } else {
+    corpo += blocoAlertas(999);
+  }
+  layout("frota", "Frota", corpo, acoes);
+  ligarMes();
+  document.querySelectorAll(".tabs button").forEach(bt => bt.onclick = () => { S.frota = bt.dataset.k; render(); });
+  const nv = document.getElementById("novo");
+  if (nv) nv.onclick = () => editar({ abastecimentos: "abastecimentos", preventiva: "planos_manutencao", checklists: "checklists" }[S.frota]);
+  document.querySelectorAll("tr.clk[data-t]").forEach(tr => tr.onclick = () => editar(tr.dataset.t, (D()[tr.dataset.t] || []).find(x => x.id === tr.dataset.id)));
+}
+function viewDiario() {
+  const d = D(), mid = S.perfil?.motorista_id;
+  const meusAb = (d.abastecimentos || []).filter(a => a.motorista_id === mid).sort((a, b) => b.data.localeCompare(a.data)).slice(0, 5);
+  const meusCk = (d.checklists || []).filter(c => c.motorista_id === mid).sort((a, b) => b.data.localeCompare(a.data)).slice(0, 5);
+  const feitoHoje = meusCk.some(c => c.data === hoje);
+  const bigBtn = (id, ico, t, sub, cls = "pri") => `<button class="btn ${cls}" id="${id}" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:16px;text-align:left;white-space:normal;min-height:84px">
+    <span style="font-size:22px">${ico}</span><span style="font-size:16px">${t}</span><span style="font-weight:400;font-size:12px;opacity:.9">${sub}</span></button>`;
+  const corpo = mid ? `<div class="grid g2" style="margin-bottom:16px">
+      ${bigBtn("bFrete", "🚚", "Registrar viagem", "cliente, cidade e situação")}
+      ${bigBtn("bCheck", feitoHoje ? "✅" : "📋", "Checklist do caminhão", feitoHoje ? "já feito hoje – pode refazer" : "faça antes de sair", feitoHoje ? "" : "ok")}
+      ${bigBtn("bAbast", "⛽", "Registrar abastecimento", "KM do painel, litros e valor", "")}
+      ${bigBtn("bAcerto", "💰", "Meu acerto", "fixo, comissão, média e saldo", "")}</div>
+    <div class="grid g2"><div class="card"><h3>Meus últimos abastecimentos</h3>${meusAb.map(a => `<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>${dataBR(a.data)} · ${n(a.km).toLocaleString("pt-BR")} km</span><b>${n(a.litros).toLocaleString("pt-BR")} L</b></div>`).join("") || '<p class="muted">Nenhum ainda.</p>'}</div>
+    <div class="card"><h3>Meus últimos checklists</h3>${meusCk.map(c => `<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>${dataBR(c.data)}</span><span class="pill ${c.status === "atencao" ? "r" : "g"}">${c.status === "atencao" ? "atenção" : "ok"}</span></div>`).join("") || '<p class="muted">Nenhum ainda.</p>'}</div></div>`
+    : '<div class="card empty">Seu usuário ainda não foi vinculado a um motorista. Peça a um sócio.</div>';
+  layout("diario", "Diário de bordo", corpo);
+  const on = (id, fn) => { const b = document.getElementById(id); if (b) b.onclick = fn; };
+  on("bFrete", () => editar("fretes")); on("bCheck", () => editar("checklists")); on("bAbast", () => editar("abastecimentos"));
+  on("bAcerto", () => { location.hash = "#acerto"; });
+}
+
 // ---------------- roteamento ----------------
 function render() {
   limparCharts();
   let rota = (location.hash || "#").slice(1) || (socio() ? "painel" : "kanban");
-  if (!socio() && !["kanban", "acerto"].includes(rota)) rota = "kanban";
-  ({ painel: viewPainel, kanban: viewKanban, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto }[rota] || viewPainel)();
+  if (!socio() && !["kanban", "acerto", "diario"].includes(rota)) rota = "kanban";
+  ({ painel: viewPainel, kanban: viewKanban, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto, frota: viewFrota, diario: viewDiario }[rota] || viewPainel)();
 }
 window.addEventListener("hashchange", render);
 
@@ -584,7 +737,7 @@ async function iniciar() {
   try { demo = localStorage.getItem("gobbo_modo") === "demo" || new URLSearchParams(location.search).has("demo"); } catch { /* */ }
   if (demo) {
     await db.iniciarDemo();
-    S.perfil = { nome: "Demonstração", papel: "socio" };
+    S.perfil = { nome: "Demonstração", papel: "socio", motorista_id: D().motoristas[0]?.id }; // Diário simula o 1º motorista
     if (!D().fretes.length) toast("Demonstração sem dados (os dados da empresa não ficam no site público).");
     else S.ym = [...D().fretes].sort((a, b) => b.data.localeCompare(a.data))[0].data.slice(0, 7);
     db.aoMudar(() => render());

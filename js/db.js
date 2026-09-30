@@ -2,7 +2,7 @@
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 export const TABELAS = ["config", "categorias", "caminhoes", "motoristas", "tabela_fretes", "semanas",
-  "fretes", "despesas", "recebimentos", "acertos", "manutencoes"];
+  "fretes", "despesas", "recebimentos", "acertos", "manutencoes", "abastecimentos", "planos_manutencao", "checklists"];
 
 const DEMO_KEY = "gobbo_demo_v1";
 let sb = null;

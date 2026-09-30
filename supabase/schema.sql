@@ -248,3 +248,80 @@ begin
     end;
   end loop;
 end $$;
+
+-- =====================================================================
+-- v2 – Frota (inspirado em Cobli, Sofit, Prolog, Trizy): abastecimentos,
+-- manutenção preventiva por km/data e checklist diário do motorista.
+-- Pode rodar de novo com segurança (if not exists).
+-- =====================================================================
+alter table public.caminhoes add column if not exists meta_km_l numeric(6, 2);   -- consumo esperado (km/L)
+
+-- Abastecimentos: registro operacional (o valor financeiro entra no acerto do posto, em Despesas)
+create table if not exists public.abastecimentos (
+  id uuid primary key default gen_random_uuid(),
+  data date not null default current_date,
+  caminhao_id uuid references public.caminhoes (id) on delete set null,
+  motorista_id uuid references public.motoristas (id) on delete set null,
+  km int not null,                        -- odômetro no abastecimento
+  litros numeric(10, 2) not null,
+  valor numeric(12, 2),
+  posto text,
+  tanque_cheio boolean not null default true,
+  obs text,
+  criado_por uuid default auth.uid(),
+  criado_em timestamptz not null default now()
+);
+create index if not exists abast_cam_idx on public.abastecimentos (caminhao_id, km);
+
+-- Plano de manutenção preventiva (ex.: troca de óleo a cada 20.000 km ou 180 dias)
+create table if not exists public.planos_manutencao (
+  id uuid primary key default gen_random_uuid(),
+  caminhao_id uuid references public.caminhoes (id) on delete cascade,
+  item text not null,
+  intervalo_km int,
+  intervalo_dias int,
+  ultimo_km int,
+  ultima_data date,
+  obs text
+);
+
+-- Checklist diário do motorista (antes de sair)
+create table if not exists public.checklists (
+  id uuid primary key default gen_random_uuid(),
+  data date not null default current_date,
+  caminhao_id uuid references public.caminhoes (id) on delete set null,
+  motorista_id uuid references public.motoristas (id) on delete set null,
+  km int,
+  itens jsonb not null default '{}'::jsonb, -- {"Pneus": true, "Freios": false, ...}
+  problemas text,
+  status text not null default 'ok' check (status in ('ok', 'atencao', 'resolvido')),
+  criado_por uuid default auth.uid(),
+  criado_em timestamptz not null default now()
+);
+
+do $$
+declare t text;
+begin
+  foreach t in array array['abastecimentos','planos_manutencao','checklists'] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists socio_tudo on public.%I', t);
+    execute format('create policy socio_tudo on public.%I for all to authenticated using (public.is_socio()) with check (public.is_socio())', t);
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
+
+drop policy if exists leitura_logado on public.planos_manutencao;
+create policy leitura_logado on public.planos_manutencao for select to authenticated using (true);
+
+drop policy if exists motorista_abast on public.abastecimentos;
+create policy motorista_abast on public.abastecimentos for select to authenticated using (motorista_id = public.meu_motorista());
+drop policy if exists motorista_abast_ins on public.abastecimentos;
+create policy motorista_abast_ins on public.abastecimentos for insert to authenticated with check (motorista_id = public.meu_motorista());
+
+drop policy if exists motorista_check on public.checklists;
+create policy motorista_check on public.checklists for select to authenticated using (motorista_id = public.meu_motorista());
+drop policy if exists motorista_check_ins on public.checklists;
+create policy motorista_check_ins on public.checklists for insert to authenticated with check (motorista_id = public.meu_motorista());

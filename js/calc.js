@@ -146,3 +146,91 @@ export function colunaConta(d) {
   if (d.vencimento <= addDias(hoje, 7)) return "prox7";
   return "a_vencer";
 }
+
+// =====================================================================
+// v2 – Frota: consumo, custo por km, preventiva e alertas
+// (indicadores usados por Cobli, Sofit, Infleet e TMS de mercado)
+// =====================================================================
+export function kmAtual(D, cam) {
+  const ks = (D.abastecimentos || []).filter(a => a.caminhao_id === cam.id).map(a => n(a.km));
+  (D.checklists || []).filter(c => c.caminhao_id === cam.id && c.km).forEach(c => ks.push(n(c.km)));
+  return Math.max(n(cam.km), ...ks, 0);
+}
+
+// Por caminhão no mês: km rodado, litros, km/L, custo/km, faturamento/km
+export function frotaMes(D, ym) {
+  return (D.caminhoes || []).filter(c => c.situacao !== "vendido").map(c => {
+    const ab = (D.abastecimentos || []).filter(a => a.caminhao_id === c.id).sort((a, b) => n(a.km) - n(b.km));
+    const doMes = ab.filter(a => noMes(a.data, ym));
+    const antes = ab.filter(a => a.data < ym + "-01");
+    const kmIni = antes.length ? n(antes[antes.length - 1].km) : (doMes.length ? n(doMes[0].km) : 0);
+    const kmFim = doMes.length ? n(doMes[doMes.length - 1].km) : kmIni;
+    const km = Math.max(0, kmFim - kmIni);
+    // litros: se não há abastecimento anterior, o primeiro do mês só "zera" o tanque
+    const litros = soma(antes.length ? doMes : doMes.slice(1), a => a.litros);
+    const valorComb = soma(doMes, a => a.valor);
+    const fat = soma(D.fretes.filter(f => f.caminhao_id === c.id && noMes(f.data, ym)), f => f.valor);
+    const custoDireto = soma(D.despesas.filter(d => d.caminhao_id === c.id && noMes(d.competencia, ym)), d => d.valor);
+    const kml = litros ? km / litros : 0;
+    return { c, km, litros, kml, meta: n(c.meta_km_l), valorComb, fat, custoDireto,
+      custoKm: km ? (custoDireto + valorComb) / km : 0, fatKm: km ? fat / km : 0,
+      desvio: c.meta_km_l && kml ? kml / n(c.meta_km_l) - 1 : null, nAbast: doMes.length };
+  });
+}
+
+export function statusPlano(D, p) {
+  const cam = (D.caminhoes || []).find(c => c.id === p.caminhao_id);
+  const km = cam ? kmAtual(D, cam) : 0;
+  const hoje = hojeISO();
+  const proxKm = p.intervalo_km && p.ultimo_km !== null && p.ultimo_km !== undefined ? n(p.ultimo_km) + n(p.intervalo_km) : null;
+  const proxData = p.intervalo_dias && p.ultima_data ? addDias(p.ultima_data, n(p.intervalo_dias)) : null;
+  const faltaKm = proxKm !== null && km ? proxKm - km : null;
+  const faltaDias = proxData ? Math.round((new Date(proxData) - new Date(hoje)) / 86400000) : null;
+  let st = "ok";
+  if ((faltaKm !== null && faltaKm <= 0) || (faltaDias !== null && faltaDias <= 0)) st = "vencida";
+  else if ((faltaKm !== null && faltaKm <= Math.max(1000, n(p.intervalo_km) * 0.1)) || (faltaDias !== null && faltaDias <= 15)) st = "proxima";
+  return { cam, km, proxKm, proxData, faltaKm, faltaDias, st };
+}
+
+export function alertas(D) {
+  const hoje = hojeISO(), out = [];
+  const add = (nivel, texto, rota) => out.push({ nivel, texto, rota });
+  (D.caminhoes || []).filter(c => c.situacao === "ativo").forEach(c => {
+    [["venc_seguro", "Seguro"], ["venc_licenciamento", "Licenciamento"]].forEach(([k, l]) => {
+      if (!c[k]) add("info", `${l} do ${c.nome} sem data cadastrada`, "frota");
+      else {
+        const dias = Math.round((new Date(c[k]) - new Date(hoje)) / 86400000);
+        if (dias < 0) add("alto", `${l} do ${c.nome} VENCIDO em ${dataBR(c[k])}`, "frota");
+        else if (dias <= 30) add("medio", `${l} do ${c.nome} vence em ${dias} dias (${dataBR(c[k])})`, "frota");
+      }
+    });
+  });
+  (D.planos_manutencao || []).forEach(p => {
+    const s = statusPlano(D, p);
+    const nome = s.cam?.nome || "frota";
+    if (s.st === "vencida") add("alto", `Preventiva vencida: ${p.item} – ${nome}`, "frota");
+    else if (s.st === "proxima") add("medio", `Preventiva próxima: ${p.item} – ${nome}${s.faltaKm !== null ? ` (faltam ${s.faltaKm.toLocaleString("pt-BR")} km)` : ""}`, "frota");
+  });
+  const venc = D.despesas.filter(d => d.status !== "pago" && d.vencimento && d.vencimento < hoje);
+  if (venc.length) add("alto", `${venc.length} conta(s) vencida(s): ${brl(soma(venc, d => d.valor))}`, "kanban");
+  const p7 = D.despesas.filter(d => d.status !== "pago" && d.vencimento && d.vencimento >= hoje && d.vencimento <= addDias(hoje, 7));
+  if (p7.length) add("medio", `${p7.length} conta(s) vencem em 7 dias: ${brl(soma(p7, d => d.valor))}`, "kanban");
+  (D.acertos || []).filter(a => a.status !== "pago" && (a.comissao === null || a.comissao === undefined))
+    .forEach(a => add("medio", `Comissão pendente no acerto de ${a.motorista_nome || "motorista"} (${a.competencia.slice(5, 7)}/${a.competencia.slice(0, 4)})`, "kanban"));
+  (D.semanas || []).filter(s => s.status === "aberta" && s.fim < hoje)
+    .forEach(s => add("medio", `Semana ${s.codigo} terminou e ainda não tem fechamento da Levíssima`, "relatorios"));
+  (D.checklists || []).filter(c => c.status === "atencao")
+    .forEach(c => add("alto", `Checklist com problema (${dataBR(c.data)}): ${c.problemas || "ver detalhes"}`, "frota"));
+  (D.fretes || []).filter(f => !f.cidade || f.cidade === "A CONFIRMAR")
+    .slice(0, 1).forEach(() => add("info", "Há fretes com cidade “A CONFIRMAR”", "lancamentos"));
+  const ordem = { alto: 0, medio: 1, info: 2 };
+  return out.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
+}
+
+export const CHECK_ITENS = ["Pneus e estepe", "Óleo e água", "Freios", "Luzes e setas", "Tacógrafo", "Documentos (CRLV, CNH)",
+  "Amarração / sider", "Extintor e triângulo", "Vazamentos", "Limpeza da cabine"];
+
+export function csv(linhas) {
+  const q = v => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  return "﻿" + linhas.map(l => l.map(q).join(";")).join("\r\n");
+}
