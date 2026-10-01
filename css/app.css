@@ -138,3 +138,12 @@ tr.res td { font-weight: 700; background: var(--green-l); color: var(--green-d);
 }
 .mobile-top { display: none; align-items: center; justify-content: space-between; background: #fff; margin: -14px -14px 14px; padding: 10px 14px; border-bottom: 3px solid var(--green); position: sticky; top: 0; z-index: 25; }
 .mobile-top img { height: 30px; }
+
+/* ---------- fechamento semanal ---------- */
+table.fech td { min-width: 150px; }
+table.fech td:first-child { min-width: 80px; white-space: nowrap; }
+.fx { display: flex; justify-content: space-between; gap: 8px; padding: 4px 6px; border-radius: 8px; font-size: 13px; }
+.fx + .fx { margin-top: 4px; }
+.fx.clk { cursor: pointer; background: var(--blue-l); }
+.fx.clk:hover { outline: 1px solid var(--blue); }
+.fx b { white-space: nowrap; color: var(--navy); }

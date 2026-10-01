@@ -114,7 +114,7 @@ const FORM = {
     { k: "tipo", label: "Tipo", type: "select", opts: C.TIPOS_FRETE, required: true },
     { k: "valor", label: "Valor (R$)", type: "number" },
     { k: "status", label: "Situação", type: "select", required: true, opts: [["agendado", "Agendado"], ["em_rota", "Em rota"], ["entregue", "Entregue"], ...(socio() ? [["fechado", "Fechado (Levíssima)"], ["recebido", "Recebido"]] : [])] },
-    ...(socio() ? [{ k: "semana_id", label: "Semana de fechamento", type: "select", opts: semOpts },
+    ...(socio() ? [{ k: "semana_id", label: "Semana de fechamento (vazio = frete à parte)", type: "select", opts: semOpts },
       { k: "caminhao_id", label: "Caminhão", type: "select", opts: camOpts },
       { k: "origem", label: "Origem" }] : []),
     { k: "obs", label: "Observação", type: "textarea", full: true },
@@ -254,7 +254,8 @@ export function editar(tabela, reg) {
     if (tabela === "fretes") {
       if (!socio()) out.motorista_id = S.perfil?.motorista_id;
       if (!out.caminhao_id) out.caminhao_id = D().motoristas.find(m => m.id === out.motorista_id)?.caminhao_id || null;
-      if (!out.semana_id) out.semana_id = D().semanas.find(s => out.data >= s.inicio && out.data <= s.fim)?.id || null;
+      // sem semana = frete à parte (fora do fechamento da Levíssima); só preenche automático em frete novo
+      if (!out.semana_id && !reg) out.semana_id = D().semanas.find(s => out.data >= s.inicio && out.data <= s.fim)?.id || null;
     }
     if (tabela === "despesas" && out.status === "pago" && !out.pagamento) out.pagamento = hoje;
     await db.salvar(tabela, out);
@@ -263,7 +264,7 @@ export function editar(tabela, reg) {
 
 // ---------------- layout ----------------
 const MENU_SOCIO = [
-  ["painel", "📊", "Painel"], ["kanban", "🗂️", "Kanban"], ["lancamentos", "🧾", "Lançamentos"],
+  ["painel", "📊", "Painel"], ["kanban", "🗂️", "Kanban"], ["fechamento", "🧮", "Fechamento"], ["lancamentos", "🧾", "Lançamentos"],
   ["frota", "🚛", "Frota"], ["relatorios", "📈", "Relatórios"], ["cadastros", "⚙️", "Cadastros"],
 ];
 const MENU_MOT = [["kanban", "🗂️", "Minhas viagens"], ["diario", "✅", "Diário de bordo"], ["acerto", "💰", "Meu acerto"]];
@@ -449,6 +450,101 @@ function viewLanc() {
   bi.oninput = () => { S.busca = bi.value; const pos = bi.selectionStart; render(); const nb = document.getElementById("busca"); nb.focus(); nb.setSelectionRange(pos, pos); };
   document.getElementById("novo").onclick = () => editar(S.lanc);
   document.querySelectorAll("tr.clk").forEach(tr => tr.onclick = () => editar(S.lanc, D()[S.lanc].find(x => x.id === tr.dataset.id)));
+}
+
+// ---------------- FECHAMENTO SEMANAL (sexta a quinta) ----------------
+const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const diaSem = iso => DIAS[new Date(iso + "T12:00:00").getDay()];
+const fretesDaSemana = (d, s) => d.fretes.filter(f => f.semana_id === s.id)
+  .sort((a, b) => a.data.localeCompare(b.data) || nomeMot(a.motorista_id).localeCompare(nomeMot(b.motorista_id)));
+const pendente = f => f.cidade === "A CONFIRMAR" || !n(f.valor) || /conferir/i.test(f.obs || "") || ["agendado", "em_rota"].includes(f.status);
+const descFrete = f => f.tipo === "Retorno ATB" ? "Atibaia (retorno)" : [f.cliente, f.cidade && f.cidade !== "A CONFIRMAR" ? f.cidade : ""].filter(Boolean).join(" – ");
+
+function textoFechamento(d, s) {
+  const fr = fretesDaSemana(d, s), i = C.semanaInfo(d, s);
+  const mots = [...new Set(fr.map(f => f.motorista_id))];
+  const linhas = [`*Fechamento Gobbo Logística – semana ${s.codigo}*`, ""];
+  mots.forEach(m => {
+    const fm = fr.filter(f => f.motorista_id === m);
+    linhas.push(`*${nomeMot(m) || "Sem motorista"}*`);
+    fm.forEach(f => linhas.push(`${dataBR(f.data).slice(0, 5)} ${descFrete(f)} – ${brl(f.valor)}`));
+    linhas.push(`Subtotal: ${brl(soma(fm, f => f.valor))}`, "");
+  });
+  linhas.push(`*Total: ${brl(i.faturado)}* (${fr.length} viagens)`);
+  d.recebimentos.filter(r => r.semana_id === s.id).forEach(r => linhas.push(`(−) ${r.descricao}: ${brl(r.valor)}`));
+  if (i.recebido) linhas.push(`*A receber: ${brl(i.saldo)}*`);
+  return linhas.join("\n");
+}
+
+function viewFechamento() {
+  const d = D();
+  const sem = [...d.semanas].sort((a, b) => a.inicio.localeCompare(b.inicio));
+  if (!sem.length) { layout("fechamento", "Fechamento semanal", `<div class="card empty">Cadastre as semanas em Relatórios › Fechamentos.</div>`); return; }
+  if (!sem.some(s => s.id === S.sem)) S.sem = (sem.find(s => hoje >= s.inicio && hoje <= s.fim) || sem.filter(s => s.inicio <= hoje).pop() || sem[0]).id;
+  const ix = sem.findIndex(s => s.id === S.sem), s = sem[ix], ant = sem[ix - 1];
+  const fr = fretesDaSemana(d, s), i = C.semanaInfo(d, s);
+  const iAnt = ant ? C.semanaInfo(d, ant) : null;
+  const rec = d.recebimentos.filter(r => r.semana_id === s.id);
+  const pend = fr.filter(pendente);
+  const aParte = d.fretes.filter(f => !f.semana_id && f.data >= s.inicio && f.data <= s.fim);
+  const mots = [...new Set([...d.motoristas.filter(m => m.ativo !== false).map(m => m.id), ...fr.map(f => f.motorista_id)])];
+
+  // dias da semana (sexta → quinta) + datas de fretes lançados nesta semana fora da faixa
+  const dias = [];
+  for (let x = s.inicio; x <= s.fim; x = C.addDias(x, 1)) dias.push(x);
+  fr.forEach(f => { if (!dias.includes(f.data)) dias.push(f.data); });
+  dias.sort();
+  const semLista = dias.filter(x => x >= s.inicio && x <= s.fim && x < hoje && diaSem(x) !== "Dom" && !fr.some(f => f.data === x));
+
+  const cel = f => `<div class="fx clk" data-id="${f.id}"><span>${esc(descFrete(f))}${pendente(f) ? ' <span class="pill o">conferir</span>' : ""}</span><b>${brl0(f.valor)}</b></div>`;
+  const grade = `<div class="tbl-wrap"><table class="fech"><tr><th>Dia</th>${mots.map(m => `<th>${esc(nomeMot(m) || "Sem motorista")}</th>`).join("")}<th class="num">Total do dia</th></tr>
+    ${dias.map(x => { const fd = fr.filter(f => f.data === x); const fora = x < s.inicio || x > s.fim;
+      return `<tr><td><b>${diaSem(x)} ${dataBR(x).slice(0, 5)}</b>${fora ? '<div class="pill o">fora da semana</div>' : ""}</td>
+        ${mots.map(m => `<td>${fd.filter(f => f.motorista_id === m).map(cel).join("") || '<span class="muted">–</span>'}</td>`).join("")}
+        <td class="num">${fd.length ? brl(soma(fd, f => f.valor)) : "–"}</td></tr>`; }).join("")}
+    <tr class="tot"><td>Total</td>${mots.map(m => `<td class="num">${brl(soma(fr.filter(f => f.motorista_id === m), f => f.valor))}</td>`).join("")}<td class="num">${brl(i.faturado)}</td></tr></table></div>`;
+
+  const dif = iAnt && iAnt.faturado ? i.faturado / iAnt.faturado - 1 : null;
+  const comp = sem.slice(Math.max(0, ix - 3), ix + 1).reverse().map(x => { const k = C.semanaInfo(d, x); const nf = fretesDaSemana(d, x).length;
+    const of = x.total_oficial !== null && x.total_oficial !== undefined && x.total_oficial !== "" ? n(x.total_oficial) : null;
+    return `<tr class="${x.id === s.id ? "grp" : ""}"><td><b>${esc(x.codigo)}</b></td><td><span class="pill ${x.status === "aberta" ? "o" : x.status === "paga" ? "g" : ""}">${x.status}</span></td>
+      <td class="num">${nf}</td><td class="num">${brl(k.faturado)}</td><td class="num">${of === null ? "–" : brl(of)}</td>
+      <td class="num ${of !== null && Math.abs(k.faturado - of) > 0.009 ? "neg" : ""}">${of === null ? "–" : brl(k.faturado - of)}</td>
+      <td class="num">${brl(k.recebido)}</td><td class="num ${k.saldo > 0.009 ? "neg" : "pos"}">${brl(k.saldo)}</td></tr>`; }).join("");
+
+  const corpo = `<div class="kpis">
+      ${kpi("Faturado na semana", brl(i.faturado), `${fr.length} viagens · ${dataBR(s.inicio).slice(0, 5)} (sex) a ${dataBR(s.fim).slice(0, 5)} (qui)`, "navy")}
+      ${kpi("Oficial Levíssima", s.total_oficial ? brl(s.total_oficial) : "aguardando", s.total_oficial ? (Math.abs(i.faturado - n(s.total_oficial)) < 0.01 ? "bate com o faturado" : `<span class="neg">diferença ${brl(i.faturado - n(s.total_oficial))}</span>`) : "planilha da Levíssima", "orange")}
+      ${kpi("Recebido / créditos", brl(i.recebido), `${rec.length} lançamento(s)`, "green")}
+      ${kpi("Saldo a receber", brl(i.saldo), s.status === "aberta" ? "semana aberta" : s.status, i.saldo > 0.009 ? "red" : "gd")}
+      ${kpi("Semana anterior", iAnt ? brl(iAnt.faturado) : "–", dif === null ? "" : `<span class="${dif < 0 ? "neg" : "pos"}">${dif >= 0 ? "+" : ""}${pct(dif)}</span> nesta semana`, "")}
+      ${kpi("Pendências", String(pend.length + semLista.length), pend.length + semLista.length ? "ver lista abaixo" : "tudo conferido", pend.length + semLista.length ? "red" : "green")}
+    </div>
+    <div class="card" style="margin-bottom:16px"><h3>Viagens por dia e motorista</h3>${grade}
+      <p class="muted" style="font-size:12px;margin-bottom:0">Semana de fechamento: sexta a quinta (a Levíssima paga na quinta). Toque numa viagem para editar.</p></div>
+    <div class="grid g2" style="margin-bottom:16px">
+      <div class="card"><h3>Para conferir</h3>${pend.length || semLista.length ? `<div style="display:flex;flex-direction:column;gap:6px">
+        ${pend.map(f => `<div class="fx clk" data-id="${f.id}"><span>${dataBR(f.data).slice(0, 5)} · ${esc(nomeMot(f.motorista_id))} · ${esc(descFrete(f))}<br><span class="muted" style="font-size:12px">${esc([f.status === "em_rota" ? "em rota" : f.status === "agendado" ? "agendado" : "", f.cidade === "A CONFIRMAR" ? "cidade a confirmar" : "", f.obs].filter(Boolean).join(" · "))}</span></span><b>${brl0(f.valor)}</b></div>`).join("")}
+        ${semLista.map(x => `<div class="muted">${diaSem(x)} ${dataBR(x).slice(0, 5)} – nenhuma viagem lançada</div>`).join("")}</div>` : '<p class="muted" style="margin:0">Nada pendente nesta semana.</p>'}</div>
+      <div class="card"><h3>Recebimentos e créditos da semana</h3>${rec.length ? `<table>${rec.map(r => `<tr><td>${dataBR(r.data).slice(0, 5)}</td><td>${esc(r.descricao)}<div class="muted" style="font-size:12px">${esc(r.tipo)}</div></td><td class="num">${brl(r.valor)}</td></tr>`).join("")}
+        <tr class="tot"><td colspan="2">Total</td><td class="num">${brl(i.recebido)}</td></tr></table>` : '<p class="muted" style="margin:0">Nenhum recebimento lançado ainda.</p>'}</div>
+    </div>
+    ${aParte.length ? `<div class="card" style="margin-bottom:16px"><h3>Fretes à parte (fora do fechamento da Levíssima)</h3>
+      ${aParte.map(f => `<div class="fx clk" data-id="${f.id}"><span>${dataBR(f.data).slice(0, 5)} · ${esc(nomeMot(f.motorista_id))} · ${esc(descFrete(f))}<br><span class="muted" style="font-size:12px">${esc(f.obs || "")}</span></span><b>${brl0(f.valor)}</b></div>`).join("")}
+      <p class="muted" style="font-size:12px;margin-bottom:0">Contam no faturamento do mês, mas não entram no valor cobrado da Levíssima.</p></div>` : ""}
+    <div class="card"><h3>Comparação com as semanas anteriores</h3><div class="tbl-wrap"><table><tr><th>Semana</th><th>Situação</th><th class="num">Viagens</th><th class="num">Faturado</th><th class="num">Oficial</th><th class="num">Diferença</th><th class="num">Recebido</th><th class="num">Saldo</th></tr>${comp}</table></div></div>`;
+
+  const acoes = `<button class="btn sm" id="semAnt" ${ix ? "" : "disabled"} aria-label="Semana anterior">◀</button>
+    <select class="sel" id="semSel">${opts(sem.map(x => [x.id, x.codigo]), s.id, false)}</select>
+    <button class="btn sm" id="semProx" ${ix < sem.length - 1 ? "" : "disabled"} aria-label="Próxima semana">▶</button>
+    <button class="btn pri" id="copiar">Copiar resumo</button>`;
+  layout("fechamento", "Fechamento semanal", corpo, acoes);
+  const ir = id => { S.sem = id; render(); };
+  document.getElementById("semSel").onchange = e => ir(e.target.value);
+  document.getElementById("semAnt").onclick = () => ix && ir(sem[ix - 1].id);
+  document.getElementById("semProx").onclick = () => ix < sem.length - 1 && ir(sem[ix + 1].id);
+  document.getElementById("copiar").onclick = () => tentar(() => navigator.clipboard.writeText(textoFechamento(d, s)), "Resumo copiado – é só colar no WhatsApp");
+  document.querySelectorAll(".fx.clk").forEach(el => el.onclick = () => editar("fretes", D().fretes.find(f => f.id === el.dataset.id)));
 }
 
 // ---------------- RELATÓRIOS ----------------
@@ -737,7 +833,7 @@ function render() {
   limparCharts();
   let rota = (location.hash || "#").slice(1) || (socio() ? "painel" : "kanban");
   if (!socio() && !["kanban", "acerto", "diario"].includes(rota)) rota = "kanban";
-  ({ painel: viewPainel, kanban: viewKanban, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto, frota: viewFrota, diario: viewDiario }[rota] || viewPainel)();
+  ({ painel: viewPainel, kanban: viewKanban, fechamento: viewFechamento, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto, frota: viewFrota, diario: viewDiario }[rota] || viewPainel)();
 }
 window.addEventListener("hashchange", render);
 
