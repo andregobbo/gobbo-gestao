@@ -183,7 +183,7 @@ language plpgsql security definer set search_path = public as $$
 begin
   insert into public.perfis (id, nome, email, papel)
   values (new.id, coalesce(new.raw_user_meta_data ->> 'nome', split_part(new.email, '@', 1)), new.email,
-          case when lower(new.email) = any (array['andrergobbo@gmail.com', 'andregobbo@outlook.com.br']) then 'socio' else 'motorista' end)
+          case when lower(new.email) = any (array['andrergobbo@gmail.com', 'andregobbo@outlook.com.br', 'nicolas@grupolevissima.com.br', 'leonardo@grupolevissima.com.br']) then 'socio' else 'motorista' end)
   on conflict (id) do nothing;
   return new;
 end;
