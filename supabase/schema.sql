@@ -365,6 +365,10 @@ declare
   v_ini date; v_fim date; m record; cfg record;
   v_km numeric; v_l numeric; v_media numeric; v_val numeric; v_ant int; v_ult int; v_desp uuid; v_alerta text;
 begin
+  -- Só sócio (pelo app) ou o agendamento do pg_cron (sem usuário) podem calcular.
+  if auth.uid() is not null and not public.is_socio() then
+    raise exception 'Apenas sócios podem calcular o bônus';
+  end if;
   v_sab := v_sab - ((extract(dow from v_sab)::int + 1) % 7); -- ajusta para o sábado da data (dow 6 = sábado)
   v_ini := v_sab - 7; v_fim := v_sab - 1;
   select * into cfg from public.config limit 1;
@@ -393,7 +397,11 @@ begin
   end loop;
   return query select * from public.bonus_media where semana_ini = v_ini;
 end $$;
+-- Por padrão o Postgres libera EXECUTE para todos (inclusive anon): fecha e libera só para logados.
+revoke execute on function public.calcular_bonus_media(date) from public, anon;
 grant execute on function public.calcular_bonus_media(date) to authenticated;
+-- novo_usuario só roda pelo gatilho de cadastro; ninguém precisa chamá-la pela API.
+revoke execute on function public.novo_usuario() from public, anon, authenticated;
 
 -- Agendamento: todo sábado às 14h de Brasília (17h UTC). Requer a extensão pg_cron
 -- (Supabase › Database › Extensions › pg_cron › Enable). Se ainda não estiver ativa, este bloco só avisa.
