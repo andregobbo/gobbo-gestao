@@ -1,4 +1,4 @@
-# Gobbo Logística – Plataforma de Gestão
+# Gobbo – Plataforma de Gestão (Holding + empresas)
 
 Aplicativo web instalável (PWA) para Android, iOS, Windows e Mac, com Kanban, painéis e lançamentos.
 Backend: Supabase (banco, login, tempo real). Código: GitHub. Publicação: GitHub Pages.
@@ -32,6 +32,29 @@ Levíssima, acerto mensal dos motoristas, aportes dos sócios).
 
 Regras: despesas “Pago por sócio” e “Abatimento” entram na DRE mas não saem do caixa; movimentação com sócios fica fora do lucro;
 abastecimentos são registro operacional (o valor do diesel entra pelo acerto do posto, em Despesas).
+
+## Holding Gobbo Participações (v4)
+
+Uma plataforma para todas as empresas e para os três sócios (André, Nicolas, Leonardo):
+
+| Empresa | O que entra |
+|---|---|
+| Gobbo Participações e Investimentos (holding) | Arrendamento recebido da Levíssima, empréstimos de terceiros (Rogério, Alessandro, Equipe Bombas, Luís), custo do dinheiro |
+| Gobbo Logística | Caminhões, fretes, diesel, manutenção, motoristas (telas da seção “Gobbo Logística”) |
+| SkyFit Campo Limpo Paulista | Academia aberta em fev/2026 |
+| SkyFit Francisco Morato | Academia em obra (inauguração prevista nov–dez) |
+| Família / Pessoal | Kátia, pai, imóveis (apto, terreno), consórcios |
+
+Telas da seção **Holding**: Visão geral, Empresas (DRE mês a mês), Contas (Kanban a pagar), Livro-caixa (filtros, CSV, importar),
+Sócios (saldo de cada sócio em cada empresa + quem deve a quem entre irmãos + extrato) e Dívidas.
+
+Regras principais:
+- **Saldo do sócio × empresa:** positivo = a empresa deve ao sócio (aportes e contas pagas do bolso); negativo = o sócio deve à empresa.
+- **Logística:** os saldos partem do “FECHAMENTO CAMINHÃO” de 02/05/2024 (configurável em `config.corte_saldo_logistica`).
+- **Máquina do Felipe (Perfiltex, 8,99%):** o sócio que passa o cartão recebe aporte do valor cheio; a empresa recebe o líquido e a
+  taxa entra como despesa “Custo de antecipação no cartão”.
+- **Importar histórico:** Livro-caixa › Importar › escolher o JSON gerado a partir dos grupos de WhatsApp. A importação usa `origem_ref`,
+  então importar de novo atualiza em vez de duplicar. Os dados apurados ficam fora do repositório (pasta `privado/`).
 
 ## Kanban
 - **Fretes:** Agendado → Em rota → Entregue → Fechado (Levíssima) → Recebido

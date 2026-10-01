@@ -413,3 +413,89 @@ begin
 exception when others then
   raise notice 'pg_cron indisponível – ative a extensão pg_cron e rode este bloco de novo (%).', sqlerrm;
 end $$;
+
+-- =====================================================================
+-- v4 – Holding Gobbo Participações: várias empresas, sócios, livro-caixa único e dívidas
+-- Sinal do saldo sócio × empresa: positivo = a empresa deve ao sócio.
+-- Máquina de cartão (Perfiltex/InfinitePay): sócio recebe aporte do valor bruto;
+-- a empresa recebe o líquido e lança a taxa (8,99%) como despesa.
+-- =====================================================================
+create table if not exists public.empresas (
+  id text primary key,
+  nome text not null,
+  tipo text not null default 'operacional' check (tipo in ('holding','operacional','familia')),
+  cnpj text,
+  cor text,
+  ordem int not null default 0,
+  pai_id text references public.empresas(id),
+  ativa boolean not null default true,
+  obs text
+);
+create table if not exists public.socios (
+  id text primary key,
+  nome text not null,
+  cor text,
+  ordem int not null default 0
+);
+create table if not exists public.dividas (
+  id uuid primary key default gen_random_uuid(),
+  credor text not null,
+  empresa_id text references public.empresas(id),
+  descricao text,
+  principal numeric(14,2),
+  juros text,
+  inicio date,
+  status text not null default 'aberta' check (status in ('aberta','quitada','renegociada')),
+  obs text
+);
+create table if not exists public.movimentos (
+  id uuid primary key default gen_random_uuid(),
+  data date not null,
+  empresa_id text references public.empresas(id),
+  tipo text not null check (tipo in ('receita','despesa','aporte','retirada','emprestimo_entrada','emprestimo_pagamento','socio_socio','transferencia','saldo_inicial')),
+  categoria text,
+  descricao text,
+  valor numeric(14,2) not null default 0,
+  valor_bruto numeric(14,2),
+  socio_id text references public.socios(id),
+  socio_destino_id text references public.socios(id),
+  pago_por text,              -- sócio ou empresa que pagou/recebeu no lugar da empresa
+  divida_id uuid references public.dividas(id) on delete set null,
+  forma text,
+  status text not null default 'pago' check (status in ('previsto','a_pagar','pago')),
+  vencimento date,
+  conferir boolean not null default false,
+  nota text,
+  fonte text,
+  anexo text,
+  origem_ref text unique,     -- chave da importação (evita duplicar ao importar de novo)
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+create index if not exists mov_data_idx on public.movimentos (data);
+create index if not exists mov_emp_idx on public.movimentos (empresa_id, data);
+-- Saldos dos sócios na Logística partem do "FECHAMENTO CAMINHÃO" de 02/05/2024.
+alter table public.config add column if not exists corte_saldo_logistica date default '2024-05-03';
+
+insert into public.empresas (id,nome,tipo,cnpj,cor,ordem,pai_id) values
+ ('holding','Gobbo Participações e Investimentos','holding',null,'#0b2e59',0,null),
+ ('logistica','Gobbo Logística e Serviços','operacional','59.992.583/0001-27','#1f6feb',1,'holding'),
+ ('sky_cl','SkyFit Campo Limpo Paulista','operacional','62.317.200/0001-20','#e8590c',2,'holding'),
+ ('sky_morato','SkyFit Francisco Morato','operacional',null,'#c2255c',3,'holding'),
+ ('familia','Família / Pessoal (Kátia, pai, imóveis)','familia',null,'#6f42c1',4,null)
+on conflict (id) do update set nome=excluded.nome, tipo=excluded.tipo, cnpj=coalesce(excluded.cnpj, public.empresas.cnpj), cor=excluded.cor, ordem=excluded.ordem, pai_id=excluded.pai_id;
+insert into public.socios (id,nome,cor,ordem) values
+ ('andre','André','#1f6feb',1),('nicolas','Nicolas','#2f9e44',2),('leonardo','Leonardo','#e8590c',3)
+on conflict (id) do nothing;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['empresas','socios','dividas','movimentos'] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists socio_tudo on public.%I', t);
+    execute format('create policy socio_tudo on public.%I for all to authenticated using (public.is_socio()) with check (public.is_socio())', t);
+    begin execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null; end;
+  end loop;
+end $$;

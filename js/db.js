@@ -2,7 +2,8 @@
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 export const TABELAS = ["config", "categorias", "caminhoes", "motoristas", "tabela_fretes", "semanas",
-  "fretes", "despesas", "recebimentos", "acertos", "manutencoes", "abastecimentos", "planos_manutencao", "checklists", "bonus_media"];
+  "fretes", "despesas", "recebimentos", "acertos", "manutencoes", "abastecimentos", "planos_manutencao", "checklists", "bonus_media",
+  "empresas", "socios", "dividas", "movimentos"];
 
 const DEMO_KEY = "gobbo_demo_v1";
 let sb = null;
@@ -61,10 +62,22 @@ export async function iniciarSupabase() {
   return cache;
 }
 
+// Supabase devolve no máximo 1000 linhas por consulta: busca em páginas.
+async function buscarTudo(cli, t) {
+  let todos = [], de = 0;
+  for (;;) {
+    const r = await cli.from(t).select("*").range(de, de + 999);
+    if (r.error) return r;
+    todos = todos.concat(r.data || []);
+    if (!r.data || r.data.length < 1000) return { data: todos };
+    de += 1000;
+  }
+}
+
 export async function recarregar() {
   if (modo !== "supabase") return cache;
   const cli = await supabase();
-  const res = await Promise.all(TABELAS.map(t => cli.from(t).select("*").limit(10000)));
+  const res = await Promise.all(TABELAS.map(t => buscarTudo(cli, t)));
   const novo = {};
   res.forEach((r, i) => {
     if (r.error) console.warn(TABELAS[i], r.error.message);
@@ -97,6 +110,22 @@ export async function salvar(tabela, obj) {
   if (error) throw new Error(error.message);
   await recarregar();
   return data;
+}
+
+// Grava muitos registros de uma vez (importação). Upsert pela chave informada.
+export async function salvarMuitos(tabela, regs, chave = "id") {
+  if (modo === "demo") {
+    regs.forEach(r => { const reg = limpar({ ...r }); if (!reg.id) reg.id = uuid();
+      const i = cache[tabela].findIndex(x => x[chave] === reg[chave]); if (i >= 0) cache[tabela][i] = { ...cache[tabela][i], ...reg }; else cache[tabela].push(reg); });
+    persistirDemo(); avisar(); return regs.length;
+  }
+  const cli = await supabase();
+  for (let i = 0; i < regs.length; i += 500) {
+    const { error } = await cli.from(tabela).upsert(regs.slice(i, i + 500).map(limpar), { onConflict: chave });
+    if (error) throw new Error(error.message);
+  }
+  await recarregar();
+  return regs.length;
 }
 
 export async function atualizar(tabela, id, patch) {

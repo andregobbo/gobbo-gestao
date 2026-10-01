@@ -1,5 +1,6 @@
 import * as db from "./db.js";
 import * as C from "./calc.js";
+import * as H from "./holding.js";
 import { EMPRESA } from "./config.js";
 
 const { brl, brl0, pct, dataBR, n, soma, hojeISO } = C;
@@ -264,21 +265,26 @@ export function editar(tabela, reg) {
 
 // ---------------- layout ----------------
 const MENU_SOCIO = [
-  ["painel", "📊", "Painel"], ["kanban", "🗂️", "Kanban"], ["fechamento", "🧮", "Fechamento"], ["lancamentos", "🧾", "Lançamentos"],
+  ["#sec", "", "Holding"],
+  ["holding", "🏛️", "Visão geral"], ["empresa", "🏢", "Empresas"], ["contas", "🗂️", "Contas (Kanban)"],
+  ["livro", "🧾", "Livro-caixa"], ["socios", "🤝", "Sócios"], ["dividas", "💳", "Dívidas"],
+  ["#sec", "", "Gobbo Logística"],
+  ["painel", "📊", "Painel"], ["kanban", "🚚", "Kanban"], ["fechamento", "🧮", "Fechamento"], ["lancamentos", "📋", "Lançamentos"],
   ["frota", "🚛", "Frota"], ["relatorios", "📈", "Relatórios"], ["cadastros", "⚙️", "Cadastros"],
 ];
+const BOTTOM_SOCIO = [["holding", "🏛️", "Geral"], ["contas", "🗂️", "Contas"], ["livro", "🧾", "Livro"], ["socios", "🤝", "Sócios"], ["menu", "☰", "Mais"]];
 const MENU_MOT = [["kanban", "🗂️", "Minhas viagens"], ["diario", "✅", "Diário de bordo"], ["acerto", "💰", "Meu acerto"]];
 function layout(rota, titulo, corpo, acoes = "") {
   const menu = socio() ? MENU_SOCIO : MENU_MOT;
   root.innerHTML = `<div class="app">
     <aside class="side"><div class="brand"><img src="icons/logo.png" alt="${esc(EMPRESA)}"></div>
-      <nav>${menu.map(([r, i, l]) => `<a href="#${r}" class="${r === rota ? "on" : ""}"><span>${i}</span>${l}</a>`).join("")}</nav>
+      <nav>${menu.map(([r, i, l]) => r === "#sec" ? `<div class="sec">${l}</div>` : `<a href="#${r}" class="${r === rota ? "on" : ""}"><span>${i}</span>${l}</a>`).join("")}</nav>
       <div class="user">${esc(S.perfil?.nome || "Demonstração")}<br><span class="muted">${db.getModo() === "demo" ? "modo demonstração" : esc(S.perfil?.papel || "")}</span><br>
       <button id="sair">${db.getModo() === "demo" ? "Sair da demonstração" : "Sair"}</button></div></aside>
     <main><div class="mobile-top"><img src="icons/logo.png" alt=""><button class="btn sm" id="sair2">Sair</button></div>
       <div class="topbar"><h1>${esc(titulo)}</h1>${db.getModo() === "demo" ? '<span class="demo-flag">DEMONSTRAÇÃO</span>' : ""}${acoes}</div>
       ${corpo}</main>
-    <nav class="bottom">${menu.map(([r, i, l]) => `<a href="#${r}" class="${r === rota ? "on" : ""}"><span class="i">${i}</span>${l.split(" ")[0]}</a>`).join("")}</nav>
+    <nav class="bottom">${(socio() ? BOTTOM_SOCIO : menu).map(([r, i, l]) => `<a href="#${r}" class="${r === rota ? "on" : ""}"><span class="i">${i}</span>${l.split(" ")[0]}</a>`).join("")}</nav>
   </div>`;
   const out = async () => {
     if (db.getModo() === "demo") { try { localStorage.removeItem("gobbo_modo"); } catch { /* */ } }
@@ -828,12 +834,292 @@ function viewDiario() {
   on("bAcerto", () => { location.hash = "#acerto"; });
 }
 
+// =====================================================================
+// HOLDING – visão geral, empresas, contas, livro-caixa, sócios, dívidas
+// =====================================================================
+const nomeEmp = id => D().empresas?.find(e => e.id === id)?.nome || (id ? id : "—");
+const curtoEmp = id => ({ holding: "Holding", logistica: "Logística", sky_cl: "SkyFit C. Limpo", sky_morato: "SkyFit Morato", familia: "Família" }[id] || nomeEmp(id));
+const corEmp = id => D().empresas?.find(e => e.id === id)?.cor || "#90a4ae";
+const nomeSoc = id => D().socios?.find(s => s.id === id)?.nome || ({ andre: "André", nicolas: "Nicolas", leonardo: "Leonardo" }[id] || id || "");
+const nomePagador = p => (!p ? "" : H.SOCIOS_ID.includes(p) ? nomeSoc(p) : curtoEmp(p));
+const empOpts = (todas = false) => [...(todas ? [["", "Todas as empresas"]] : []), ...[...(D().empresas || [])].sort((a, b) => n(a.ordem) - n(b.ordem)).map(e => [e.id, e.nome])];
+const socOpts = () => [...(D().socios || [])].sort((a, b) => n(a.ordem) - n(b.ordem)).map(s => [s.id, s.nome]);
+const pagOpts = () => [["", "Conta da própria empresa"], ...socOpts().map(([id, nm]) => [id, "Sócio: " + nm]), ...empOpts().map(([id, nm]) => [id, "Empresa: " + nm])];
+const chipEmp = id => id ? `<span class="pill" style="background:${corEmp(id)}1f;color:${corEmp(id)}">${esc(curtoEmp(id))}</span>` : `<span class="pill">Entre sócios</span>`;
+const ehSaida = m => ["despesa", "retirada", "emprestimo_pagamento"].includes(m.tipo);
+const valorFmt = m => `<span class="${ehSaida(m) ? "neg" : m.tipo === "socio_socio" || m.tipo === "transferencia" ? "" : "pos"}">${brl(m.valor)}</span>`;
+const anosMov = () => [...new Set((D().movimentos || []).map(m => m.data.slice(0, 4)))].sort().reverse();
+const seletorAno = (id = "anoH", todos = true) => `<select class="sel" id="${id}" aria-label="Ano">${todos ? `<option value="" ${!S.anoH ? "selected" : ""}>Todo o histórico</option>` : ""}${anosMov().map(a => `<option ${a === S.anoH ? "selected" : ""}>${a}</option>`).join("")}</select>`;
+function ligarAno(id = "anoH") { const el = document.getElementById(id); if (el) el.onchange = () => { S.anoH = el.value; render(); }; }
+S.anoH = S.anoH ?? hoje.slice(0, 4); S.emp = S.emp || "logistica"; S.socX = S.socX || "andre";
+S.lv = S.lv || { emp: "", tipo: "", soc: "", per: "", q: "", conf: false, lim: 300 };
+
+const FORM_MOV = () => [
+  { k: "data", label: "Data", type: "date", required: true },
+  { k: "empresa_id", label: "Empresa", type: "select", opts: () => [["", "— (entre sócios)"], ...empOpts()] },
+  { k: "tipo", label: "Tipo", type: "select", opts: H.TIPOS, required: true },
+  { k: "valor", label: "Valor (R$)", type: "number", required: true },
+  { k: "descricao", label: "Descrição", required: true, full: true },
+  { k: "categoria", label: "Categoria", list: () => [...new Set((D().movimentos || []).map(m => m.categoria).filter(Boolean))].sort() },
+  { k: "status", label: "Situação", type: "select", opts: H.STATUS, required: true },
+  { k: "vencimento", label: "Vencimento (contas a pagar)", type: "date" },
+  { k: "socio_id", label: "Sócio (aporte/retirada) ou quem pagou/emprestou (entre sócios)", type: "select", opts: socOpts },
+  { k: "socio_destino_id", label: "Sócio que recebeu (só entre sócios)", type: "select", opts: socOpts },
+  { k: "pago_por", label: "Quem pagou / recebeu o dinheiro", type: "select", opts: pagOpts },
+  { k: "maquina", label: "Passado na máquina do Felipe? (desconta 8,99%)", type: "select", opts: [["nao", "Não"], ["sim", "Sim – o valor acima é o bruto passado no cartão"]] },
+  { k: "divida_id", label: "Dívida relacionada", type: "select", opts: () => (D().dividas || []).map(d => [d.id, d.credor]) },
+  { k: "forma", label: "Forma de pagamento", type: "select", opts: C.FORMAS },
+  { k: "conferir", label: "Precisa conferir?", type: "select", opts: [["false", "Não"], ["true", "Sim"]], required: true },
+  { k: "nota", label: "Observação / o que conferir", type: "textarea", full: true },
+  { k: "fonte", label: "Origem (grupo · data · quem enviou)", full: true },
+];
+function editarMov(reg, base = {}) {
+  if (!socio()) return toast("Somente sócios.", true);
+  const obj = reg ? { ...reg, conferir: String(!!reg.conferir), maquina: "nao" } : { data: hoje, status: "pago", tipo: "despesa", conferir: "false", maquina: "nao", empresa_id: S.emp || "logistica", ...base };
+  modal((reg ? "Editar" : "Novo") + " lançamento", FORM_MOV(), obj, async out => {
+    out.conferir = out.conferir === "true";
+    const maq = out.maquina === "sim"; delete out.maquina;
+    if (!out.empresa_id && out.tipo !== "socio_socio") throw new Error("Escolha a empresa.");
+    out.atualizado_em = new Date().toISOString();
+    if (maq && !n(out.valor_bruto)) {
+      const bruto = n(out.valor), liq = Math.round(bruto * (1 - H.TAXA_MAQUINA) * 100) / 100, taxa = Math.round((bruto - liq) * 100) / 100;
+      if (out.tipo === "despesa" && H.SOCIOS_ID.includes(out.pago_por)) { // sócio pagou fornecedor pela máquina: aporte do sócio + despesa líquida
+        await db.salvar("movimentos", { data: out.data, empresa_id: out.empresa_id, tipo: "aporte", categoria: "Aporte de sócio", socio_id: out.pago_por, valor: liq, valor_bruto: bruto, descricao: "Cartão na máquina do Felipe – " + out.descricao, status: out.status });
+        out.pago_por = null; out.valor = liq;
+      } else { out.valor_bruto = bruto; out.valor = liq; }
+      await db.salvar("movimentos", { data: out.data, empresa_id: out.empresa_id, tipo: "despesa", categoria: "Custo de antecipação no cartão (máquina 8,99%)", valor: taxa, descricao: "Taxa da máquina – " + out.descricao, status: out.status });
+    }
+    if (out.status === "pago" && reg && reg.status !== "pago" && !out.data) out.data = hoje;
+    await db.salvar("movimentos", out);
+  }, reg ? () => db.excluir("movimentos", reg.id) : null);
+}
+
+function tabelaMov(ms, { emp = true, lim = 99999 } = {}) {
+  return `<div class="tbl-wrap"><table><tr><th>Data</th>${emp ? "<th>Empresa</th>" : ""}<th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Sócio / quem pagou</th><th class="num">Valor</th></tr>
+    ${ms.slice(0, lim).map(m => `<tr class="clk" data-mid="${m.id}"><td>${dataBR(m.data)}${m.status !== "pago" ? ` <span class="pill o">${m.status === "a_pagar" ? "a pagar" : "previsto"}</span>` : ""}</td>${emp ? `<td>${chipEmp(m.empresa_id)}</td>` : ""}
+      <td>${esc(H.TIPO_NOME[m.tipo] || m.tipo)}</td><td>${esc(m.categoria || "")}</td>
+      <td>${m.conferir ? '<span class="pill r" title="' + esc(m.nota || "conferir") + '">conferir</span> ' : ""}${esc(m.descricao || "")}${m.valor_bruto ? ` <span class="muted">(bruto ${brl(m.valor_bruto)})</span>` : ""}</td>
+      <td>${esc([m.socio_id && nomeSoc(m.socio_id), m.socio_destino_id && "→ " + nomeSoc(m.socio_destino_id), m.pago_por && "pago/recebido: " + nomePagador(m.pago_por)].filter(Boolean).join(" "))}</td>
+      <td class="num">${valorFmt(m)}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Nenhum lançamento.</td></tr>`}</table></div>`;
+}
+function ligarTabelaMov() {
+  document.querySelectorAll("tr[data-mid]").forEach(tr => tr.onclick = () => editarMov(D().movimentos.find(m => m.id === tr.dataset.mid)));
+}
+
+function viewHolding() {
+  const d = D(), per = S.anoH || "";
+  const emps = [...(d.empresas || [])].sort((a, b) => n(a.ordem) - n(b.ordem));
+  const res = emps.map(e => ({ e, r: H.resultado(d, e.id, per) }));
+  const oper = res.filter(x => x.e.tipo !== "familia");
+  const tot = k => soma(oper, x => x.r[k]);
+  const aPagar = (d.movimentos || []).filter(m => m.status !== "pago");
+  const venc = aPagar.filter(m => (m.vencimento || m.data) < hoje);
+  const divs = H.dividasResumo(d), saldoDiv = soma(divs, x => x.saldo);
+  const conf = (d.movimentos || []).filter(m => m.conferir).length;
+  const se = H.saldosSocioEmpresa(d), entre = H.saldosEntreSocios(d), ee = H.entreEmpresas(d);
+  const corpo = `
+  <div class="kpis">
+    ${kpi("Receitas", brl0(tot("receitas")), per ? "em " + per : "todo o histórico", "green")}
+    ${kpi("Despesas", brl0(tot("despesas")), "inclui juros " + brl0(tot("juros")), "red")}
+    ${kpi("Resultado", `<span class="${tot("resultado") < 0 ? "neg" : ""}">${brl0(tot("resultado"))}</span>`, "empresas + holding (sem família)", "gd")}
+    ${kpi("Contas a pagar", brl0(soma(aPagar, m => m.valor)), `<span class="${venc.length ? "neg" : ""}">${venc.length} vencidas</span>`, "orange")}
+    ${kpi("Dívidas em aberto", brl0(saldoDiv), divs.filter(x => x.saldo > 0).length + " credores", "navy")}
+    ${kpi("Para conferir", conf, "lançamentos marcados", conf ? "red" : "")}
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3>Resultado por empresa ${per ? "– " + per : "(histórico)"}</h3><div class="tbl-wrap"><table>
+      <tr><th>Empresa</th><th class="num">Receitas</th><th class="num">Despesas</th><th class="num">Resultado</th><th class="num">Aportes sócios</th><th class="num">Retiradas</th><th class="num">Empréstimos (líq.)</th></tr>
+      ${res.map(x => `<tr class="clk" data-emp="${x.e.id}"><td>${chipEmp(x.e.id)} ${esc(x.e.nome)}</td><td class="num">${brl0(x.r.receitas)}</td><td class="num">${brl0(x.r.despesas)}</td>
+        <td class="num ${x.r.resultado < 0 ? "neg" : "pos"}"><b>${brl0(x.r.resultado)}</b></td><td class="num">${brl0(x.r.aportes)}</td><td class="num">${brl0(x.r.retiradas)}</td><td class="num">${brl0(x.r.empIn - x.r.empOut)}</td></tr>`).join("")}
+    </table></div><p class="muted" style="font-size:12px">Aporte do sócio conta pelo valor que ele pôs (bruto, inclusive o passado na máquina do Felipe); a taxa de 8,99% entra como despesa da empresa.</p></div>
+    <div class="card"><h3>Resultado mensal ${per || hoje.slice(0, 4)}</h3><div class="chart-box"><canvas id="cHold"></canvas></div></div>
+    <div class="card"><h3>Sócios × empresas (+ empresa deve ao sócio · − sócio deve à empresa)</h3><div class="tbl-wrap"><table>
+      <tr><th>Empresa</th>${H.SOCIOS_ID.map(s => `<th class="num">${nomeSoc(s)}</th>`).join("")}</tr>
+      ${emps.map(e => `<tr><td>${chipEmp(e.id)}</td>${H.SOCIOS_ID.map(s => { const v = se[e.id]?.[s] || 0; return `<td class="num ${v < 0 ? "neg" : "pos"}">${brl0(v)}</td>`; }).join("")}</tr>`).join("")}
+      <tr class="tot"><td>Total</td>${H.SOCIOS_ID.map(s => { const v = emps.reduce((t, e) => t + (se[e.id]?.[s] || 0), 0); return `<td class="num">${brl0(v)}</td>`; }).join("")}</tr></table></div>
+      <p style="margin:8px 0 0">${entre.map(x => `<span class="pill ${Math.abs(x.valor) < 1 ? "g" : "o"}">${x.valor >= 0 ? nomeSoc(x.a) + " deve a " + nomeSoc(x.b) : nomeSoc(x.b) + " deve a " + nomeSoc(x.a)}: ${brl0(Math.abs(x.valor))}</span>`).join(" ")}</p>
+      <p><a href="#socios">Ver extrato de cada sócio →</a></p></div>
+    <div class="card"><h3>Uma empresa pagou pela outra</h3>${ee.length ? `<div class="tbl-wrap"><table><tr><th>Quem deve</th><th>A quem</th><th class="num">Valor</th></tr>
+      ${ee.map(x => `<tr><td>${chipEmp(x.deve)}</td><td>${chipEmp(x.credor)}</td><td class="num">${brl0(x.valor)}</td></tr>`).join("")}</table></div>` : `<p class="muted">Nada em aberto.</p>`}
+      <p class="muted" style="font-size:12px">Ex.: a conta da Logística pagou obra da SkyFit → SkyFit deve à Logística. Família = Kátia, pai, imóveis (apto Novamerica, terreno, colégio).</p></div>
+  </div>`;
+  layout("holding", "Gobbo Participações – visão geral", corpo, seletorAno() + `<button class="btn pri" id="novoM">+ Lançamento</button>`);
+  ligarAno();
+  document.getElementById("novoM").onclick = () => editarMov();
+  document.querySelectorAll("tr[data-emp]").forEach(tr => tr.onclick = () => { S.emp = tr.dataset.emp; location.hash = "#empresa"; });
+  const ano = per || hoje.slice(0, 4);
+  grafico("cHold", { type: "bar", data: { labels: C.MES_AB, datasets: emps.filter(e => e.tipo !== "familia").map(e => ({ label: curtoEmp(e.id), data: H.porMes(d, e.id, ano).map(x => x.resultado), backgroundColor: corEmp(e.id), borderRadius: 4 })) },
+    options: { scales: { x: { stacked: true }, y: { stacked: true, ...eixoBRL } } } });
+}
+
+function viewEmpresa() {
+  const d = D(), e = S.emp, ano = S.anoH || hoje.slice(0, 4);
+  const emps = [...(d.empresas || [])].sort((a, b) => n(a.ordem) - n(b.ordem));
+  const r = H.resultado(d, e, S.anoH || ""), meses = H.porMes(d, e, ano);
+  const cats = Object.entries(r.porCat).sort((a, b) => b[1] - a[1]), rcats = Object.entries(r.recCat).sort((a, b) => b[1] - a[1]);
+  const ms = (d.movimentos || []).filter(m => m.empresa_id === e && (!S.anoH || m.data.startsWith(S.anoH))).sort((a, b) => b.data.localeCompare(a.data));
+  const celMes = (f) => meses.map(x => `<td class="num">${f(x) ? brl0(f(x)) : ""}</td>`).join("");
+  const linhaCat = (k, tipo) => `<tr><td>${esc(k)}</td>${meses.map(x => { const v = (d.movimentos || []).filter(m => m.empresa_id === e && m.tipo === tipo && (m.categoria || "Sem categoria") === k && m.data.startsWith(x.ym) && m.status === "pago").reduce((t, m) => t + n(m.valor), 0); return `<td class="num">${v ? brl0(v) : ""}</td>`; }).join("")}</tr>`;
+  const corpo = `<div class="tabs">${emps.map(x => `<button data-e="${x.id}" class="${x.id === e ? "on" : ""}">${esc(curtoEmp(x.id))}</button>`).join("")}</div>
+  <div class="kpis">
+    ${kpi("Receitas", brl0(r.receitas), S.anoH || "histórico", "green")}${kpi("Despesas", brl0(r.despesas), "juros " + brl0(r.juros), "red")}
+    ${kpi("Resultado", `<span class="${r.resultado < 0 ? "neg" : ""}">${brl0(r.resultado)}</span>`, "", "gd")}
+    ${kpi("Aportes de sócios", brl0(r.aportes), "valor bruto aportado", "navy")}${kpi("Retiradas / devoluções", brl0(r.retiradas), "", "orange")}
+    ${kpi("Empréstimos", brl0(r.empIn), "pagos " + brl0(r.empOut), "")}
+  </div>
+  <div class="card"><h3>DRE mês a mês – ${ano}${S.anoH ? "" : " (escolha o ano acima)"}</h3><div class="tbl-wrap"><table>
+    <tr><th>Conta</th>${C.MES_AB.map(m => `<th class="num">${m}</th>`).join("")}</tr>
+    <tr class="grp"><td>Receitas</td>${celMes(x => x.receitas)}</tr>${rcats.map(([k]) => linhaCat(k, "receita")).join("")}
+    <tr class="grp"><td>Despesas</td>${celMes(x => x.despesas)}</tr>${cats.map(([k]) => linhaCat(k, "despesa")).join("")}
+    <tr class="res"><td>Resultado</td>${meses.map(x => `<td class="num ${x.resultado < 0 ? "neg" : ""}">${x.receitas || x.despesas ? brl0(x.resultado) : ""}</td>`).join("")}</tr>
+    <tr><td class="muted">Aportes de sócios</td>${celMes(x => x.aportes)}</tr><tr><td class="muted">Retiradas</td>${celMes(x => x.retiradas)}</tr>
+  </table></div></div>
+  <div class="card" style="margin-top:14px"><h3>Lançamentos (${ms.length})</h3>${tabelaMov(ms, { emp: false, lim: 200 })}
+  ${ms.length > 200 ? `<p class="muted">Mostrando 200 – veja todos no <a href="#livro" id="vLivro">Livro-caixa</a>.</p>` : ""}</div>`;
+  layout("empresa", nomeEmp(e), corpo, seletorAno() + `<button class="btn pri" id="novoM">+ Lançamento</button>`);
+  ligarAno(); ligarTabelaMov();
+  document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => { S.emp = b.dataset.e; render(); });
+  document.getElementById("novoM").onclick = () => editarMov(null, { empresa_id: e });
+  const vl = document.getElementById("vLivro"); if (vl) vl.onclick = () => { S.lv.emp = e; };
+}
+
+const COLS_CONTAS = [["a_vencer", "A vencer"], ["prox7", "Vence em 7 dias"], ["vencida", "Vencida"], ["paga", "Paga (no mês)"]];
+function viewContas() {
+  const d = D(), fe = S.contaEmp || "";
+  const its = (d.movimentos || []).filter(m => (!fe || m.empresa_id === fe) && (m.status !== "pago" || (m.vencimento && C.noMes(m.data, S.ym))))
+    .map(m => ({ m, col: H.colunaConta(m, hoje) })).sort((a, b) => (a.m.vencimento || a.m.data).localeCompare(b.m.vencimento || b.m.data));
+  const corpo = `<div class="board">${COLS_CONTAS.map(([ck, cl]) => { const xs = its.filter(i => i.col === ck);
+    return `<div class="col"><div class="col-h"><span>${cl} <span class="muted">(${xs.length})</span></span><span class="sum">${brl0(soma(xs, i => i.m.valor))}</span></div>
+      <div class="list" data-col="${ck}">${xs.map(({ m }) => `<div class="kc ${ck === "vencida" ? "venc" : ck === "prox7" ? "p7" : ck === "paga" ? "ok" : ""}" data-id="${m.id}">
+        <div class="l1"><span>${esc(m.descricao)}</span><span class="v">${brl(m.valor)}</span></div>
+        <div class="l2">${chipEmp(m.empresa_id)} · ${m.vencimento ? "vence " + dataBR(m.vencimento) : dataBR(m.data)}${m.categoria ? " · " + esc(m.categoria) : ""}${m.pago_por ? " · " + esc(nomePagador(m.pago_por)) : ""}</div></div>`).join("")}</div></div>`; }).join("")}</div>
+  <p class="muted" style="font-size:12px;margin-top:10px">Todas as contas a pagar das empresas, holding e família. Arraste para “Paga” para baixar (data de hoje). Toque no cartão para editar. Use “+ Conta” para lançar boletos, parcelas e combinados futuros.</p>`;
+  layout("contas", "Contas a pagar – Kanban", corpo, `<select class="sel" id="fEmp">${opts(empOpts(true), fe, false)}</select>` + seletorMes() + `<button class="btn pri" id="novoC">+ Conta</button>`);
+  ligarMes();
+  document.getElementById("fEmp").onchange = ev => { S.contaEmp = ev.target.value; render(); };
+  document.getElementById("novoC").onclick = () => editarMov(null, { status: "a_pagar", tipo: "despesa", vencimento: hoje, empresa_id: fe || "logistica" });
+  document.querySelectorAll(".kc").forEach(el => el.onclick = () => editarMov(d.movimentos.find(m => m.id === el.dataset.id)));
+  esperarLib("Sortable").then(Sortable => document.querySelectorAll(".list").forEach(list => Sortable.create(list, {
+    group: "contasH", animation: 150, delay: 180, delayOnTouchOnly: true,
+    onEnd: ev => { if (ev.from === ev.to) return; const id = ev.item.dataset.id, col = ev.to.dataset.col;
+      tentar(() => db.atualizar("movimentos", id, col === "paga" ? { status: "pago", data: hoje } : { status: "a_pagar" }), "Atualizado").then(render); },
+  })));
+}
+
+function filtrarLivro() {
+  const f = S.lv, q = (f.q || "").toLowerCase();
+  return (D().movimentos || []).filter(m => (!f.emp || (f.emp === "_socios" ? !m.empresa_id : m.empresa_id === f.emp)) && (!f.tipo || m.tipo === f.tipo)
+    && (!f.soc || m.socio_id === f.soc || m.socio_destino_id === f.soc || m.pago_por === f.soc) && (!f.per || m.data.startsWith(f.per)) && (!f.conf || m.conferir)
+    && (!q || [m.descricao, m.categoria, m.nota, m.fonte, String(m.valor)].join(" ").toLowerCase().includes(q))).sort((a, b) => b.data.localeCompare(a.data));
+}
+function viewLivro() {
+  const f = S.lv, ms = filtrarLivro();
+  const tot = t => soma(ms.filter(m => m.tipo === t), m => m.valor);
+  const corpo = `<div class="filters">
+    <select class="sel" id="lvEmp">${opts([...empOpts(true), ["_socios", "Entre sócios"]], f.emp, false)}</select>
+    <select class="sel" id="lvTipo"><option value="">Todos os tipos</option>${opts(H.TIPOS, f.tipo, false)}</select>
+    <select class="sel" id="lvSoc"><option value="">Todos os sócios</option>${opts(socOpts(), f.soc, false)}</select>
+    <select class="sel" id="lvPer"><option value="">Todo o período</option>${anosMov().flatMap(a => [[a, a], ...Array.from({ length: 12 }, (_, i) => [a + "-" + String(i + 1).padStart(2, "0"), "  " + C.MES_AB[i] + "/" + a])]).map(([v, l]) => `<option value="${v}" ${v === f.per ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <input class="inp" id="lvQ" placeholder="Buscar descrição, valor, categoria…" value="${esc(f.q)}" style="flex:1;min-width:180px">
+    <label class="pill ${f.conf ? "r" : ""}" style="cursor:pointer;display:flex;align-items:center;gap:6px"><input type="checkbox" id="lvConf" ${f.conf ? "checked" : ""}> só “conferir”</label>
+  </div>
+  <div class="kpis">${kpi("Lançamentos", ms.length, "")}${kpi("Receitas", brl0(tot("receita")), "", "green")}${kpi("Despesas", brl0(tot("despesa")), "", "red")}
+    ${kpi("Aportes", brl0(soma(ms.filter(m => m.tipo === "aporte"), m => m.valor_bruto || m.valor)), "bruto", "navy")}${kpi("Retiradas", brl0(tot("retirada")), "", "orange")}
+    ${kpi("Empréstimos", brl0(tot("emprestimo_entrada")), "pagos " + brl0(tot("emprestimo_pagamento")), "")}</div>
+  <div class="card">${tabelaMov(ms, { lim: f.lim })}${ms.length > f.lim ? `<p style="text-align:center"><button class="btn" id="lvMais">Mostrar mais (${ms.length - f.lim} restantes)</button></p>` : ""}</div>
+  <p class="muted" style="font-size:12px">Histórico completo apurado das conversas do WhatsApp (Caminhões – Financeiro/Manutenção, André/Nico, Léo/André), com comprovantes lidos. Itens marcados “conferir” têm dúvida registrada na observação.</p>`;
+  layout("livro", "Livro-caixa", corpo, `<button class="btn" id="lvCsv">⬇ Exportar</button><label class="btn" style="cursor:pointer">⬆ Importar<input type="file" id="lvImp" accept=".json,application/json" hidden></label><button class="btn pri" id="novoM">+ Lançamento</button>`);
+  const set = (id, k, ev = "onchange") => { const el = document.getElementById(id); el[ev] = () => { f[k] = el.type === "checkbox" ? el.checked : el.value; f.lim = 300; render(); }; };
+  set("lvEmp", "emp"); set("lvTipo", "tipo"); set("lvSoc", "soc"); set("lvPer", "per"); set("lvConf", "conf");
+  const qi = document.getElementById("lvQ"); qi.oninput = () => { f.q = qi.value; const p = qi.selectionStart; render(); const nq = document.getElementById("lvQ"); nq.focus(); nq.setSelectionRange(p, p); };
+  const mais = document.getElementById("lvMais"); if (mais) mais.onclick = () => { f.lim += 500; render(); };
+  document.getElementById("novoM").onclick = () => editarMov(null, { empresa_id: f.emp && f.emp !== "_socios" ? f.emp : "logistica" });
+  ligarTabelaMov();
+  document.getElementById("lvCsv").onclick = () => {
+    const linhas = [["Data", "Empresa", "Tipo", "Categoria", "Descrição", "Sócio", "Sócio destino", "Pago/recebido por", "Situação", "Vencimento", "Valor", "Valor bruto", "Conferir", "Observação", "Origem"],
+      ...ms.map(m => [dataBR(m.data), nomeEmp(m.empresa_id), H.TIPO_NOME[m.tipo], m.categoria, m.descricao, nomeSoc(m.socio_id), nomeSoc(m.socio_destino_id), nomePagador(m.pago_por), m.status, dataBR(m.vencimento), n(m.valor).toFixed(2).replace(".", ","), m.valor_bruto ? n(m.valor_bruto).toFixed(2).replace(".", ",") : "", m.conferir ? "sim" : "", m.nota, m.fonte])];
+    const blob = new Blob([C.csv(linhas)], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `gobbo-livro-caixa-${hoje}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  };
+  document.getElementById("lvImp").onchange = async ev => {
+    const file = ev.target.files[0]; if (!file) return;
+    await tentar(async () => {
+      const rows = H.validarImport(JSON.parse(await file.text()));
+      if (!confirm(`Importar ${rows.length} lançamentos? Lançamentos já importados antes (mesma origem) serão atualizados, não duplicados.`)) return;
+      toast("Importando… aguarde");
+      const nOk = await db.salvarMuitos("movimentos", rows, "origem_ref");
+      toast(nOk + " lançamentos importados");
+    });
+    render();
+  };
+}
+
+function viewSocios() {
+  const d = D(), se = H.saldosSocioEmpresa(d), entre = H.saldosEntreSocios(d);
+  const emps = [...(d.empresas || [])].sort((a, b) => n(a.ordem) - n(b.ordem));
+  const s = S.socX, ext = H.extratoSocio(d, s);
+  const resumo = id => { const e = H.extratoSocio(d, id).filter(x => x.empresa);
+    return { aportou: soma(e.filter(x => x.m.tipo === "aporte" || x.m.tipo === "saldo_inicial"), x => x.valor), pagou: soma(e.filter(x => ["despesa", "emprestimo_pagamento", "transferencia"].includes(x.m.tipo) || (x.m.tipo === "retirada" && x.valor > 0)), x => x.valor),
+      retirou: -soma(e.filter(x => x.m.tipo === "retirada" && x.valor < 0), x => x.valor), recebeu: -soma(e.filter(x => ["receita", "emprestimo_entrada"].includes(x.m.tipo)), x => x.valor) }; };
+  const corpo = `<div class="grid g2">
+    <div class="card"><h3>Saldo de cada sócio com cada empresa</h3><div class="tbl-wrap"><table>
+      <tr><th>Empresa</th>${H.SOCIOS_ID.map(x => `<th class="num">${nomeSoc(x)}</th>`).join("")}</tr>
+      ${emps.map(e => `<tr><td>${chipEmp(e.id)}</td>${H.SOCIOS_ID.map(x => { const v = se[e.id]?.[x] || 0; return `<td class="num ${v < 0 ? "neg" : "pos"}">${brl(v)}</td>`; }).join("")}</tr>`).join("")}
+      <tr class="tot"><td>Total</td>${H.SOCIOS_ID.map(x => `<td class="num">${brl(emps.reduce((t, e) => t + (se[e.id]?.[x] || 0), 0))}</td>`).join("")}</tr></table></div>
+      <p class="muted" style="font-size:12px">Positivo = a empresa deve ao sócio (ele aportou/pagou mais do que retirou). Negativo = o sócio retirou/recebeu mais do que pôs.
+      Logística: parte do fechamento oficial de 02/05/2024 (caminhão devia Nicolas R$ 4.054,98, André R$ 1.850,33, Léo R$ 11.217,44). Família: dinheiro de Kátia/pai/imóveis que passou por cada sócio.</p></div>
+    <div class="card"><h3>Entre irmãos</h3><div class="tbl-wrap"><table><tr><th>Situação</th><th class="num">Valor</th></tr>
+      ${entre.map(x => `<tr><td>${x.valor >= 0 ? `<b>${nomeSoc(x.a)}</b> deve a <b>${nomeSoc(x.b)}</b>` : `<b>${nomeSoc(x.b)}</b> deve a <b>${nomeSoc(x.a)}</b>`}</td><td class="num">${brl(Math.abs(x.valor))}</td></tr>`).join("")}</table></div>
+      <p class="muted" style="font-size:12px">André × Nicolas: saldo informado no grupo até 13/08/2025 (André devia R$ 107.636,58) + todos os comprovantes depois disso. André × Léo: grupo Léo/André desde jan/2025.
+      Atenção: desde ago/2025 o Nicolas parou de lançar as parcelas de cartão/parcelamento do André – confirme antes de acertar.</p>
+      <h3 style="margin-top:14px">Resumo por sócio</h3><div class="tbl-wrap"><table><tr><th>Sócio</th><th class="num">Aportou</th><th class="num">Pagou p/ empresas</th><th class="num">Retirou</th><th class="num">Recebeu em nome delas</th></tr>
+      ${H.SOCIOS_ID.map(x => { const r = resumo(x); return `<tr><td><b>${nomeSoc(x)}</b></td><td class="num">${brl0(r.aportou)}</td><td class="num">${brl0(r.pagou)}</td><td class="num">${brl0(r.retirou)}</td><td class="num">${brl0(r.recebeu)}</td></tr>`; }).join("")}</table></div></div>
+  </div>
+  <div class="card" style="margin-top:14px"><h3>Extrato – ${nomeSoc(s)}</h3><div class="tabs">${H.SOCIOS_ID.map(x => `<button data-s="${x}" class="${x === s ? "on" : ""}">${nomeSoc(x)}</button>`).join("")}</div>
+  <div class="tbl-wrap"><table><tr><th>Data</th><th>Empresa / com</th><th>Tipo</th><th>Descrição</th><th class="num">Efeito</th></tr>
+  ${ext.slice().reverse().slice(0, 600).map(x => `<tr class="clk" data-mid="${x.m.id}"><td>${dataBR(x.m.data)}</td><td>${x.empresa ? chipEmp(x.empresa) : "com " + esc(nomeSoc(x.outro))}</td><td>${esc(H.TIPO_NOME[x.m.tipo])}</td>
+    <td>${x.m.conferir ? '<span class="pill r">conferir</span> ' : ""}${esc(x.m.descricao || "")}</td><td class="num ${x.valor < 0 ? "neg" : "pos"}">${brl(x.valor)}</td></tr>`).join("")}</table></div>
+  <p class="muted" style="font-size:12px">Efeito positivo = crédito do sócio (empresa/irmão passa a dever a ele).</p></div>`;
+  layout("socios", "Sócios – André, Nicolas e Leonardo", corpo, `<button class="btn pri" id="novoM">+ Lançamento</button>`);
+  document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => { S.socX = b.dataset.s; render(); });
+  document.getElementById("novoM").onclick = () => editarMov(null, { tipo: "aporte", socio_id: s });
+  ligarTabelaMov();
+}
+
+function viewDividas() {
+  const d = D(), ds = H.dividasResumo(d);
+  const corpo = `<div class="kpis">${kpi("Saldo devedor (estimado)", brl0(soma(ds, x => x.saldo)), "principal recebido − pago", "red")}
+    ${kpi("Juros já pagos", brl0(soma(ds, x => x.juros)), "lançados como despesa", "orange")}${kpi("Credores", ds.length, "")}</div>
+  ${ds.map(x => `<div class="card" style="margin-bottom:14px"><h3>${esc(x.d.credor)} <span class="pill ${x.d.status === "quitada" ? "g" : "o"}">${x.d.status}</span></h3>
+    <p class="muted">${chipEmp(x.d.empresa_id)} · juros: ${esc(x.d.juros || "—")} · desde ${dataBR(x.d.inicio)} ${x.d.obs ? "· " + esc(x.d.obs) : ""}</p>
+    <div class="kpis">${kpi("Recebido", brl0(x.entrou), "", "green")}${kpi("Principal pago", brl0(x.pago), "", "navy")}${kpi("Juros pagos", brl0(x.juros), "", "orange")}${kpi("Saldo", brl0(x.saldo), "", "red")}</div>
+    ${tabelaMov(x.ms.slice().sort((a, b) => b.data.localeCompare(a.data)), { lim: 400 })}
+    <p><button class="btn" data-ed="${x.d.id}">Editar dívida</button></p></div>`).join("")}
+  <p class="muted" style="font-size:12px">Saldos estimados pelo que apareceu no WhatsApp. Valor principal de vários empréstimos (Rogério, Alessandro, agiota, Luís) não foi informado de forma completa – edite a dívida para registrar o principal e o combinado.</p>`;
+  layout("dividas", "Dívidas e empréstimos", corpo, `<button class="btn pri" id="novaD">+ Dívida</button>`);
+  ligarTabelaMov();
+  const FD = [{ k: "credor", label: "Credor", required: true, full: true }, { k: "empresa_id", label: "Empresa devedora", type: "select", opts: empOpts },
+    { k: "principal", label: "Principal (R$)", type: "number" }, { k: "juros", label: "Juros / combinado" }, { k: "inicio", label: "Início", type: "date" },
+    { k: "status", label: "Situação", type: "select", opts: [["aberta", "Aberta"], ["quitada", "Quitada"], ["renegociada", "Renegociada"]], required: true },
+    { k: "obs", label: "Observação", type: "textarea", full: true }];
+  const ed = reg => modal(reg ? "Editar dívida" : "Nova dívida", FD, reg ? { ...reg } : { status: "aberta", empresa_id: "holding", inicio: hoje }, out => db.salvar("dividas", out), reg ? () => db.excluir("dividas", reg.id) : null);
+  document.getElementById("novaD").onclick = () => ed();
+  document.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => ed(d.dividas.find(x => x.id === b.dataset.ed)));
+}
+
+function viewMenu() {
+  const corpo = `<div class="card"><nav class="menu-lista">${MENU_SOCIO.map(([r, i, l]) => r === "#sec" ? `<h3>${l}</h3>` : `<a href="#${r}" class="btn" style="display:flex;gap:10px;margin-bottom:8px;text-align:left">${i} ${l}</a>`).join("")}</nav></div>`;
+  layout("menu", "Menu", corpo);
+}
+
+
 // ---------------- roteamento ----------------
 function render() {
   limparCharts();
-  let rota = (location.hash || "#").slice(1) || (socio() ? "painel" : "kanban");
+  let rota = (location.hash || "#").slice(1) || (socio() ? "holding" : "kanban");
   if (!socio() && !["kanban", "acerto", "diario"].includes(rota)) rota = "kanban";
-  ({ painel: viewPainel, kanban: viewKanban, fechamento: viewFechamento, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto, frota: viewFrota, diario: viewDiario }[rota] || viewPainel)();
+  ({ holding: viewHolding, empresa: viewEmpresa, contas: viewContas, livro: viewLivro, socios: viewSocios, dividas: viewDividas, menu: viewMenu,
+    painel: viewPainel, kanban: viewKanban, fechamento: viewFechamento, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto, frota: viewFrota, diario: viewDiario }[rota] || viewPainel)();
 }
 window.addEventListener("hashchange", render);
 
