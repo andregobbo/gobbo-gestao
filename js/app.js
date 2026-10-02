@@ -1,7 +1,7 @@
 import * as db from "./db.js";
 import * as C from "./calc.js";
 import * as H from "./holding.js";
-import { EMPRESA } from "./config.js";
+import { EMPRESA, EMPRESA_LOG } from "./config.js";
 
 const { brl, brl0, pct, dataBR, n, soma, hojeISO } = C;
 const root = document.getElementById("root");
@@ -278,12 +278,14 @@ const nConferir = () => (D().pendencias || []).filter(p => p.status !== "ok").le
 const MENU_MOT = [["kanban", "🗂️", "Minhas viagens"], ["diario", "✅", "Diário de bordo"], ["acerto", "💰", "Meu acerto"]];
 function layout(rota, titulo, corpo, acoes = "") {
   const menu = socio() ? MENU_SOCIO : MENU_MOT;
+  // sócios veem a marca da holding; motoristas trabalham para a Logística
+  const [logo, marca] = socio() ? ["icons/logo.svg", EMPRESA] : ["icons/logo-logistica.png", EMPRESA_LOG];
   root.innerHTML = `<div class="app">
-    <aside class="side"><div class="brand"><img src="icons/logo.png" alt="${esc(EMPRESA)}"></div>
-      <nav>${menu.map(([r, i, l]) => r === "#sec" ? `<div class="sec">${l}</div>` : `<a href="#${r}" class="${r === rota ? "on" : ""}"><span>${i}</span>${l}${r === "conferir" && nConferir() ? ` <b class="badge">${nConferir()}</b>` : ""}</a>`).join("")}</nav>
+    <aside class="side"><div class="brand"><img src="${logo}" alt="${esc(marca)}"></div>
+      <nav>${menu.map(([r, i, l]) => r === "#sec" ? `<div class="sec">${l === EMPRESA_LOG ? `<img src="icons/logo-logistica.png" alt="" class="sec-logo">` : ""}${l}</div>` : `<a href="#${r}" class="${r === rota ? "on" : ""}"><span>${i}</span>${l}${r === "conferir" && nConferir() ? ` <b class="badge">${nConferir()}</b>` : ""}</a>`).join("")}</nav>
       <div class="user">${esc(S.perfil?.nome || "Demonstração")}<br><span class="muted">${db.getModo() === "demo" ? "modo demonstração" : esc(S.perfil?.papel || "")}</span><br>
       <button id="sair">${db.getModo() === "demo" ? "Sair da demonstração" : "Sair"}</button></div></aside>
-    <main><div class="mobile-top"><img src="icons/logo.png" alt=""><button class="btn sm" id="sair2">Sair</button></div>
+    <main><div class="mobile-top"><img src="${logo}" alt="${esc(marca)}"><button class="btn sm" id="sair2">Sair</button></div>
       <div class="topbar"><h1>${esc(titulo)}</h1>${db.getModo() === "demo" ? '<span class="demo-flag">DEMONSTRAÇÃO</span>' : ""}${acoes}</div>
       ${corpo}</main>
     <nav class="bottom">${(socio() ? BOTTOM_SOCIO : menu).map(([r, i, l]) => `<a href="#${r}" class="${r === rota ? "on" : ""}"><span class="i">${i}${r === "conferir" && nConferir() ? `<b class="badge">${nConferir()}</b>` : ""}</span>${l.split(" ")[0]}</a>`).join("")}</nav>
@@ -947,7 +949,7 @@ function viewHolding() {
       ${ee.map(x => `<tr><td>${chipEmp(x.deve)}</td><td>${chipEmp(x.credor)}</td><td class="num">${brl0(x.valor)}</td></tr>`).join("")}</table></div>` : `<p class="muted">Nada em aberto.</p>`}
       <p class="muted" style="font-size:12px">Ex.: a conta da Logística pagou obra da SkyFit → SkyFit deve à Logística. Família = Kátia, pai, imóveis (apto Novamerica, terreno, colégio).</p></div>
   </div>`;
-  layout("holding", "Gobbo Participações – visão geral", corpo, seletorAno() + `<button class="btn pri" id="novoM">+ Lançamento</button>`);
+  layout("holding", "Gobbo Investimentos – visão geral da holding", corpo, seletorAno() + `<button class="btn pri" id="novoM">+ Lançamento</button>`);
   ligarAno();
   document.getElementById("novoM").onclick = () => editarMov();
   document.querySelectorAll("tr[data-emp]").forEach(tr => tr.onclick = () => { S.emp = tr.dataset.emp; location.hash = "#empresa"; });
@@ -1180,7 +1182,7 @@ window.addEventListener("hashchange", render);
 
 // ---------------- entrada ----------------
 function telaLogin(msg = "") {
-  root.innerHTML = `<div class="login"><div class="box"><img src="icons/logo.png" alt="${esc(EMPRESA)}"><h2>Plataforma de gestão</h2>
+  root.innerHTML = `<div class="login"><div class="box"><img src="icons/logo.svg" alt="${esc(EMPRESA)}"><h2>Plataforma de gestão</h2>
     <form id="fLogin"><div class="fld"><label for="em">E-mail</label><input id="em" type="email" autocomplete="username" required></div>
     <div class="fld"><label for="pw">Senha</label><input id="pw" type="password" autocomplete="current-password" required minlength="6"></div>
     <div class="fld hidden" id="nomeBox"><label for="nm">Seu nome</label><input id="nm" autocomplete="name"></div>
@@ -1213,7 +1215,7 @@ const traduzErro = m => (/Invalid login/i.test(m) ? "E-mail ou senha incorretos.
   : /already registered/i.test(m) ? "Este e-mail já tem acesso. Use “Entrar”." : m);
 
 function telaSemBanco() {
-  root.innerHTML = `<div class="login"><div class="box"><img src="icons/logo.png" alt=""><h2>Banco de dados ainda não configurado</h2>
+  root.innerHTML = `<div class="login"><div class="box"><img src="icons/logo.svg" alt="${esc(EMPRESA)}"><h2>Banco de dados ainda não configurado</h2>
     <p class="note" style="text-align:left">O projeto Supabase está conectado, mas as tabelas ainda não foram criadas. No Supabase, abra <b>SQL Editor</b> e rode
     <b>supabase/schema.sql</b> (e depois <b>seed.sql</b> para carregar setembro).</p>
     <button class="btn pri" id="demo">Abrir demonstração</button><button class="btn" style="margin-top:8px" id="again">Tentar novamente</button></div></div>`;

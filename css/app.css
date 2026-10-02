@@ -108,9 +108,9 @@ tr.res td { font-weight: 700; background: var(--green-l); color: var(--green-d);
 .toast.err { background: var(--red); }
 
 /* ---------- login ---------- */
-.login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; background: linear-gradient(135deg, var(--navy), #164a8a 60%, var(--green-d)); }
-.login .box { background: #fff; border-radius: 18px; padding: 28px; width: min(420px, 100%); box-shadow: 0 20px 50px rgba(0, 0, 0, .3); }
-.login img { width: 220px; display: block; margin: 0 auto 14px; }
+.login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; background: linear-gradient(135deg, #071a33, var(--navy) 55%, #1d4f8c); }
+.login .box { background: #fff; border-radius: 18px; padding: 28px; width: min(420px, 100%); box-shadow: 0 20px 50px rgba(0, 0, 0, .3); border-top: 4px solid #c9a23f; }
+.login img { width: 250px; display: block; margin: 0 auto 14px; }
 .login h2 { text-align: center; color: var(--navy); margin: 0 0 18px; font-size: 18px; }
 .login .fld { margin-bottom: 12px; }
 .login .btn { width: 100%; margin-top: 6px; padding: 11px; }
@@ -166,3 +166,8 @@ a.aviso-ok .btn { margin-left: auto; }
   table.tbl-conf td.num { font-size: 17px; font-weight: 700; }
   table.tbl-conf td:last-child { display: flex; gap: 8px; } table.tbl-conf td:last-child .btn { flex: 1; }
 }
+
+/* ---------- marca: holding Gobbo Investimentos ---------- */
+.side .brand { border-bottom-color: #c9a23f; }
+.side nav .sec .sec-logo { display: block; height: 22px; width: auto; background: #fff; border-radius: 6px; padding: 3px 6px; margin: 4px 0 6px; }
+.mobile-top { border-bottom-color: #c9a23f; }

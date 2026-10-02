@@ -33,7 +33,7 @@ Levíssima, acerto mensal dos motoristas, aportes dos sócios).
 Regras: despesas “Pago por sócio” e “Abatimento” entram na DRE mas não saem do caixa; movimentação com sócios fica fora do lucro;
 abastecimentos são registro operacional (o valor do diesel entra pelo acerto do posto, em Despesas).
 
-## Holding Gobbo Participações (v4)
+## Holding Gobbo Investimentos (Gobbo Participações e Investimentos) – empresa principal, dona de todas as outras (v4)
 
 Uma plataforma para todas as empresas e para os três sócios (André, Nicolas, Leonardo):
 

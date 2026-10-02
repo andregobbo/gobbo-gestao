@@ -5,4 +5,5 @@
 export const SUPABASE_URL = "https://uafyxzseyyevvdwnctfm.supabase.co";
 export const SUPABASE_KEY = "sb_publishable_u7wQWK8xOkv2RJXW_FwjRw_C5QaZtzr";
 
-export const EMPRESA = "Gobbo Logística";
+export const EMPRESA = "Gobbo Investimentos";
+export const EMPRESA_LOG = "Gobbo Logística";

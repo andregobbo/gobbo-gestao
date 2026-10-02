@@ -1,7 +1,7 @@
 {
-  "name": "Gobbo Logística – Gestão",
+  "name": "Gobbo Investimentos – Gestão",
   "short_name": "Gobbo",
-  "description": "Fretes, despesas, frota, motoristas e resultados da Gobbo Logística.",
+  "description": "Gestão da holding Gobbo Investimentos: empresas, sócios, livro-caixa, contas e a operação da Gobbo Logística.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
