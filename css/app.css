@@ -109,7 +109,7 @@ tr.res td { font-weight: 700; background: var(--green-l); color: var(--green-d);
 
 /* ---------- login ---------- */
 .login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; background: linear-gradient(135deg, #071a33, var(--navy) 55%, #1d4f8c); }
-.login .box { background: #fff; border-radius: 18px; padding: 28px; width: min(420px, 100%); box-shadow: 0 20px 50px rgba(0, 0, 0, .3); border-top: 4px solid #c9a23f; }
+.login .box { background: #fff; border-radius: 18px; padding: 28px; width: min(420px, 100%); box-shadow: 0 20px 50px rgba(0, 0, 0, .3); border-top: 4px solid #b8954a; }
 .login img { width: 250px; display: block; margin: 0 auto 14px; }
 .login h2 { text-align: center; color: var(--navy); margin: 0 0 18px; font-size: 18px; }
 .login .fld { margin-bottom: 12px; }
@@ -168,6 +168,44 @@ a.aviso-ok .btn { margin-left: auto; }
 }
 
 /* ---------- marca: holding Gobbo Investimentos ---------- */
-.side .brand { border-bottom-color: #c9a23f; }
+.side .brand { border-bottom-color: #b8954a; }
 .side nav .sec .sec-logo { display: block; height: 22px; width: auto; background: #fff; border-radius: 6px; padding: 3px 6px; margin: 4px 0 6px; }
-.mobile-top { border-bottom-color: #c9a23f; }
+.mobile-top { border-bottom-color: #b8954a; }
+
+/* ---------- v9: produtividade (busca, botão +, fluxo de caixa, comparativos) ---------- */
+.dica { font-size: 11px; color: var(--muted); }
+.fld[hidden] { display: none; }
+kbd { font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 2px 5px; background: var(--bg); color: var(--muted); margin-left: 4px; }
+.fab { position: fixed; right: 22px; bottom: 22px; width: 58px; height: 58px; border-radius: 50%; border: 0; background: var(--navy); color: #fff; font-size: 32px; line-height: 1; box-shadow: 0 8px 24px rgba(11, 46, 89, .35); cursor: pointer; z-index: 30; border: 3px solid #b8954a; }
+.fab:hover { transform: scale(1.05); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; }
+.seg button { border: 0; background: transparent; padding: 8px 12px; cursor: pointer; font-weight: 600; color: var(--muted); }
+.seg button.on { background: var(--navy); color: #fff; }
+.cmp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.cmp > div { display: flex; flex-direction: column; gap: 2px; background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+.cmp b { font-size: 20px; color: var(--navy); }
+.delta { font-size: 12px; font-weight: 700; }
+.barra { display: grid; grid-template-columns: minmax(110px, 38%) 1fr auto; gap: 8px; align-items: center; font-size: 13px; margin: 6px 0; }
+.barra span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.barra i { display: block; height: 10px; border-radius: 6px; background: linear-gradient(90deg, #b8954a, #e6c56a); }
+td.warn { color: var(--orange); font-weight: 700; }
+.card.aviso { border-left: 5px solid var(--orange); background: var(--orange-l); margin-bottom: 14px; }
+.kc-ok { margin-left: auto; padding: 2px 8px !important; font-size: 12px !important; }
+.cmdk { align-items: flex-start; padding-top: 10vh; }
+.cmdk .box { width: min(680px, 100%); padding: 12px; }
+.cmdk #ckQ { width: 100%; font-size: 17px; padding: 12px 14px; border-radius: 12px; }
+.ck-res { max-height: 60vh; overflow-y: auto; margin-top: 8px; }
+.ck-it { display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; font-size: 14px; }
+.ck-it:hover, .ck-it:focus { background: var(--blue-l); }
+.ck-dica { font-size: 12px; margin: 8px 4px 0; }
+@media (max-width: 860px) {
+  .fab { bottom: calc(var(--nav-h) + 16px + env(safe-area-inset-bottom, 0px)); right: 16px; }
+  .so-desk { display: none; }
+  .cmp { grid-template-columns: 1fr; }
+}
+/* identidade holding: azul-marinho + dourado */
+.btn.pri { background: var(--navy); border-color: var(--navy); }
+.btn.pri:hover { background: #12406f; }
+.side nav a.on { background: rgba(255, 255, 255, .12); color: #fff; box-shadow: inset 3px 0 0 #b8954a; }
+.side .brand img { max-width: 200px; }
+.mobile-top img { height: 40px; }
