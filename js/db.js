@@ -57,9 +57,17 @@ export async function iniciarSupabase() {
   await recarregar();
   const cli = await supabase();
   cli.channel("gobbo-tempo-real")
-    .on("postgres_changes", { event: "*", schema: "public" }, async () => { await recarregar(); })
+    .on("postgres_changes", { event: "*", schema: "public" }, () => agendarRecarga())
     .subscribe();
   return cache;
+}
+
+// Tempo real: junta várias alterações seguidas numa recarga só (importações geram milhares de eventos).
+let pausaTempoReal = 0, timerRecarga = null;
+function agendarRecarga() {
+  if (pausaTempoReal) return;
+  clearTimeout(timerRecarga);
+  timerRecarga = setTimeout(() => { recarregar(); }, 1500);
 }
 
 // Supabase devolve no máximo 1000 linhas por consulta: busca em páginas.
@@ -120,10 +128,13 @@ export async function salvarMuitos(tabela, regs, chave = "id") {
     persistirDemo(); avisar(); return regs.length;
   }
   const cli = await supabase();
-  for (let i = 0; i < regs.length; i += 500) {
-    const { error } = await cli.from(tabela).upsert(regs.slice(i, i + 500).map(limpar), { onConflict: chave });
-    if (error) throw new Error(error.message);
-  }
+  pausaTempoReal++;
+  try {
+    for (let i = 0; i < regs.length; i += 500) {
+      const { error } = await cli.from(tabela).upsert(regs.slice(i, i + 500).map(limpar), { onConflict: chave });
+      if (error) throw new Error(error.message);
+    }
+  } finally { pausaTempoReal--; }
   await recarregar();
   return regs.length;
 }
