@@ -266,25 +266,27 @@ export function editar(tabela, reg) {
 // ---------------- layout ----------------
 const MENU_SOCIO = [
   ["#sec", "", "Holding"],
-  ["holding", "🏛️", "Visão geral"], ["empresa", "🏢", "Empresas"], ["contas", "🗂️", "Contas (Kanban)"],
+  ["holding", "🏛️", "Visão geral"], ["conferir", "⚑", "Conferência"], ["empresa", "🏢", "Empresas"], ["contas", "🗂️", "Contas (Kanban)"],
   ["livro", "🧾", "Livro-caixa"], ["socios", "🤝", "Sócios"], ["dividas", "💳", "Dívidas"],
   ["#sec", "", "Gobbo Logística"],
   ["painel", "📊", "Painel"], ["kanban", "🚚", "Kanban"], ["fechamento", "🧮", "Fechamento"], ["lancamentos", "📋", "Lançamentos"],
   ["frota", "🚛", "Frota"], ["relatorios", "📈", "Relatórios"], ["cadastros", "⚙️", "Cadastros"],
 ];
-const BOTTOM_SOCIO = [["holding", "🏛️", "Geral"], ["contas", "🗂️", "Contas"], ["livro", "🧾", "Livro"], ["socios", "🤝", "Sócios"], ["menu", "☰", "Mais"]];
+const BOTTOM_SOCIO = [["holding", "🏛️", "Geral"], ["conferir", "⚑", "Conferir"], ["contas", "🗂️", "Contas"], ["livro", "🧾", "Livro"], ["menu", "☰", "Mais"]];
+// itens aguardando o OK dos sócios (perguntas abertas + lançamentos marcados para conferir)
+const nConferir = () => (D().pendencias || []).filter(p => p.status !== "ok").length + (D().movimentos || []).filter(m => m.conferir).length;
 const MENU_MOT = [["kanban", "🗂️", "Minhas viagens"], ["diario", "✅", "Diário de bordo"], ["acerto", "💰", "Meu acerto"]];
 function layout(rota, titulo, corpo, acoes = "") {
   const menu = socio() ? MENU_SOCIO : MENU_MOT;
   root.innerHTML = `<div class="app">
     <aside class="side"><div class="brand"><img src="icons/logo.png" alt="${esc(EMPRESA)}"></div>
-      <nav>${menu.map(([r, i, l]) => r === "#sec" ? `<div class="sec">${l}</div>` : `<a href="#${r}" class="${r === rota ? "on" : ""}"><span>${i}</span>${l}</a>`).join("")}</nav>
+      <nav>${menu.map(([r, i, l]) => r === "#sec" ? `<div class="sec">${l}</div>` : `<a href="#${r}" class="${r === rota ? "on" : ""}"><span>${i}</span>${l}${r === "conferir" && nConferir() ? ` <b class="badge">${nConferir()}</b>` : ""}</a>`).join("")}</nav>
       <div class="user">${esc(S.perfil?.nome || "Demonstração")}<br><span class="muted">${db.getModo() === "demo" ? "modo demonstração" : esc(S.perfil?.papel || "")}</span><br>
       <button id="sair">${db.getModo() === "demo" ? "Sair da demonstração" : "Sair"}</button></div></aside>
     <main><div class="mobile-top"><img src="icons/logo.png" alt=""><button class="btn sm" id="sair2">Sair</button></div>
       <div class="topbar"><h1>${esc(titulo)}</h1>${db.getModo() === "demo" ? '<span class="demo-flag">DEMONSTRAÇÃO</span>' : ""}${acoes}</div>
       ${corpo}</main>
-    <nav class="bottom">${(socio() ? BOTTOM_SOCIO : menu).map(([r, i, l]) => `<a href="#${r}" class="${r === rota ? "on" : ""}"><span class="i">${i}</span>${l.split(" ")[0]}</a>`).join("")}</nav>
+    <nav class="bottom">${(socio() ? BOTTOM_SOCIO : menu).map(([r, i, l]) => `<a href="#${r}" class="${r === rota ? "on" : ""}"><span class="i">${i}${r === "conferir" && nConferir() ? `<b class="badge">${nConferir()}</b>` : ""}</span>${l.split(" ")[0]}</a>`).join("")}</nav>
   </div>`;
   const out = async () => {
     if (db.getModo() === "demo") { try { localStorage.removeItem("gobbo_modo"); } catch { /* */ } }
@@ -917,7 +919,9 @@ function viewHolding() {
   const divs = H.dividasResumo(d), saldoDiv = soma(divs, x => x.saldo);
   const conf = (d.movimentos || []).filter(m => m.conferir).length;
   const se = H.saldosSocioEmpresa(d), entre = H.saldosEntreSocios(d), ee = H.entreEmpresas(d);
+  const pend = (d.pendencias || []).filter(p => p.status !== "ok").length;
   const corpo = `
+  ${pend + conf ? `<a href="#conferir" class="card aviso-ok"><b>⚑ Aguardando seu OK:</b> ${pend} pergunta${pend === 1 ? "" : "s"} e ${conf} lançamento${conf === 1 ? "" : "s"} para conferir <span class="btn pri">Abrir conferência →</span></a>` : ""}
   <div class="kpis">
     ${kpi("Receitas", brl0(tot("receitas")), per ? "em " + per : "todo o histórico", "green")}
     ${kpi("Despesas", brl0(tot("despesas")), "inclui juros " + brl0(tot("juros")), "red")}
@@ -1107,6 +1111,57 @@ function viewDividas() {
   document.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => ed(d.dividas.find(x => x.id === b.dataset.ed)));
 }
 
+// ---------------- conferência (aguardando OK dos sócios) ----------------
+S.cf = S.cf || { emp: "", verOk: false };
+function quemSou() { return S.perfil?.nome || (db.getModo() === "demo" ? "Demonstração" : "Sócio"); }
+function viewConferir() {
+  const d = D(), f = S.cf;
+  const perg = [...(d.pendencias || [])].sort((a, b) => n(a.ordem) - n(b.ordem));
+  const abertas = perg.filter(p => p.status !== "ok"), feitas = perg.filter(p => p.status === "ok");
+  const ms = (d.movimentos || []).filter(m => m.conferir && (!f.emp || (f.emp === "_socios" ? !m.empresa_id : m.empresa_id === f.emp))).sort((a, b) => a.data.localeCompare(b.data));
+  const okRec = (d.movimentos || []).filter(m => m.conferido_em).sort((a, b) => b.conferido_em.localeCompare(a.conferido_em)).slice(0, 30);
+  const cartaoP = p => `<div class="perg ${p.status}" data-pid="${p.id}">
+      <div class="perg-top"><span class="pill">${esc(p.area || "")}</span> <span class="pill ${p.status === "respondida" ? "o" : "r"}">${p.status === "respondida" ? "respondida – falta o OK" : "aguardando resposta"}</span></div>
+      <p>${p.ordem}. ${esc(p.pergunta)}</p>
+      <textarea class="inp" rows="2" placeholder="Sua resposta / decisão…">${esc(p.resposta || "")}</textarea>
+      <div class="perg-acoes"><button class="btn" data-acao="salvar">Salvar resposta</button><button class="btn pri" data-acao="ok">✓ OK – resolvido</button></div>
+      ${p.respondido_por ? `<p class="muted" style="font-size:12px">Última resposta: ${esc(p.respondido_por)} em ${dataBR((p.respondido_em || "").slice(0, 10))}</p>` : ""}</div>`;
+  const corpo = `
+  <div class="kpis">${kpi("Perguntas abertas", abertas.length, feitas.length + " resolvidas", abertas.length ? "red" : "green")}
+    ${kpi("Lançamentos a conferir", (d.movimentos || []).filter(m => m.conferir).length, "clique ✓ OK quando estiver certo", "orange")}
+    ${kpi("Já conferidos", (d.movimentos || []).filter(m => m.conferido_em).length, "com seu OK registrado", "green")}</div>
+  <div class="card"><h3>Perguntas que dependem de vocês</h3>
+    ${abertas.map(cartaoP).join("") || `<p class="muted">Nenhuma pergunta aberta. 👍</p>`}
+    ${feitas.length ? `<details><summary class="muted">Resolvidas (${feitas.length})</summary>${feitas.map(p => `<p><span class="pill g">OK</span> ${esc(p.pergunta)}<br><span class="muted">→ ${esc(p.resposta || "")} (${esc(p.respondido_por || "")})</span></p>`).join("")}</details>` : ""}
+  </div>
+  <div class="card"><div class="filters" style="margin:0 0 10px"><h3 style="margin:0;flex:1">Lançamentos marcados para conferir</h3>
+    <select class="sel" id="cfEmp">${opts([...empOpts(true), ["_socios", "Entre sócios"]], f.emp, false)}</select></div>
+    <div class="tbl-wrap"><table class="tbl-conf"><tr><th>Data</th><th>Empresa</th><th>Descrição</th><th class="num">Valor</th><th>O que conferir</th><th></th></tr>
+    ${ms.map(m => `<tr data-cid="${m.id}"><td>${dataBR(m.data)}${m.status !== "pago" ? ` <span class="pill o">${m.status === "a_pagar" ? "a pagar" : "previsto"}</span>` : ""}</td><td>${m.empresa_id ? chipEmp(m.empresa_id) : '<span class="pill">entre sócios</span>'}</td>
+      <td>${esc(m.descricao || "")}<br><span class="muted" style="font-size:12px">${esc(H.TIPO_NOME[m.tipo] || m.tipo)} · ${esc(m.categoria || "")}${m.pago_por ? " · pago/recebido: " + esc(nomePagador(m.pago_por)) : ""}${m.socio_id ? " · sócio: " + esc(nomeSoc(m.socio_id)) : ""}</span></td>
+      <td class="num">${valorFmt(m)}</td><td style="font-size:13px">${esc(m.nota || "conferir valor / classificação")}</td>
+      <td style="white-space:nowrap"><button class="btn pri" data-ok="${m.id}">✓ OK</button> <button class="btn" data-ed="${m.id}">Editar</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">Nada para conferir. 👍</td></tr>`}</table></div>
+    <p class="muted" style="font-size:12px">✓ OK confirma o lançamento como está e registra quem conferiu e quando. Se algo estiver errado, use Editar (ou apague o lançamento por lá).</p></div>
+  ${okRec.length ? `<div class="card"><details><summary><b>Conferidos recentemente (${okRec.length})</b></summary>${tabelaMov(okRec)}</details></div>` : ""}`;
+  layout("conferir", "Conferência – aguardando seu OK", corpo);
+  document.getElementById("cfEmp").onchange = e => { f.emp = e.target.value; render(); };
+  document.querySelectorAll("[data-ok]").forEach(b => b.onclick = () => {
+    const m = d.movimentos.find(x => x.id === b.dataset.ok); if (!m) return;
+    tentar(() => db.atualizar("movimentos", m.id, { conferir: false, conferido_em: new Date().toISOString(), conferido_por: quemSou(),
+      nota: [m.nota, "OK " + quemSou() + " " + dataBR(hoje)].filter(Boolean).join(" · "), atualizado_em: new Date().toISOString() }), "Conferido ✓");
+  });
+  document.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => editarMov(d.movimentos.find(x => x.id === b.dataset.ed)));
+  document.querySelectorAll(".perg").forEach(el => {
+    const p = perg.find(x => x.id === el.dataset.pid), txt = el.querySelector("textarea");
+    el.querySelectorAll("[data-acao]").forEach(b => b.onclick = () => {
+      const ok = b.dataset.acao === "ok";
+      if (ok && !txt.value.trim() && !confirm("Marcar como resolvida sem escrever a resposta?")) return;
+      tentar(() => db.atualizar("pendencias", p.id, { resposta: txt.value.trim() || p.resposta || null, status: ok ? "ok" : "respondida",
+        respondido_em: new Date().toISOString(), respondido_por: quemSou() }), ok ? "Resolvida ✓" : "Resposta salva");
+    });
+  });
+}
+
 function viewMenu() {
   const corpo = `<div class="card"><nav class="menu-lista">${MENU_SOCIO.map(([r, i, l]) => r === "#sec" ? `<h3>${l}</h3>` : `<a href="#${r}" class="btn" style="display:flex;gap:10px;margin-bottom:8px;text-align:left">${i} ${l}</a>`).join("")}</nav></div>`;
   layout("menu", "Menu", corpo);
@@ -1118,7 +1173,7 @@ function render() {
   limparCharts();
   let rota = (location.hash || "#").slice(1) || (socio() ? "holding" : "kanban");
   if (!socio() && !["kanban", "acerto", "diario"].includes(rota)) rota = "kanban";
-  ({ holding: viewHolding, empresa: viewEmpresa, contas: viewContas, livro: viewLivro, socios: viewSocios, dividas: viewDividas, menu: viewMenu,
+  ({ holding: viewHolding, conferir: viewConferir, empresa: viewEmpresa, contas: viewContas, livro: viewLivro, socios: viewSocios, dividas: viewDividas, menu: viewMenu,
     painel: viewPainel, kanban: viewKanban, fechamento: viewFechamento, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto, frota: viewFrota, diario: viewDiario }[rota] || viewPainel)();
 }
 window.addEventListener("hashchange", render);

@@ -499,3 +499,24 @@ begin
     exception when duplicate_object then null; end;
   end loop;
 end $$;
+
+-- =====================================================================
+-- v5 – Conferência: perguntas pendentes e registro do OK dos sócios
+-- =====================================================================
+create table if not exists public.pendencias (
+  id uuid primary key default gen_random_uuid(),
+  ordem int not null default 0,
+  area text,
+  pergunta text not null,
+  resposta text,
+  status text not null default 'aguardando' check (status in ('aguardando','respondida','ok')),
+  respondido_em timestamptz,
+  respondido_por text,
+  criado_em timestamptz not null default now()
+);
+alter table public.movimentos add column if not exists conferido_em timestamptz;
+alter table public.movimentos add column if not exists conferido_por text;
+alter table public.pendencias enable row level security;
+drop policy if exists socio_tudo on public.pendencias;
+create policy socio_tudo on public.pendencias for all to authenticated using (public.is_socio()) with check (public.is_socio());
+do $$ begin alter publication supabase_realtime add table public.pendencias; exception when duplicate_object then null; end $$;

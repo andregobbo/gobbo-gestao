@@ -147,3 +147,22 @@ table.fech td:first-child { min-width: 80px; white-space: nowrap; }
 .fx.clk { cursor: pointer; background: var(--blue-l); }
 .fx.clk:hover { outline: 1px solid var(--blue); }
 .fx b { white-space: nowrap; color: var(--navy); }
+/* conferência */
+.badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-style: normal; }
+nav.bottom .i { position: relative; }
+nav.bottom .badge { position: absolute; top: -6px; right: -14px; margin: 0; }
+a.aviso-ok { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-left: 5px solid var(--red); background: var(--red-l); color: inherit; text-decoration: none; margin-bottom: 14px; }
+a.aviso-ok .btn { margin-left: auto; }
+.perg { border: 1px solid var(--line, #e3e7ee); border-left: 4px solid var(--red); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.perg.respondida { border-left-color: var(--orange); }
+.perg p { margin: 6px 0; }
+.perg textarea { width: 100%; box-sizing: border-box; }
+.perg-acoes { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; flex-wrap: wrap; }
+@media (max-width: 700px) {
+  table.tbl-conf tr:first-child { display: none; }
+  table.tbl-conf, table.tbl-conf tbody, table.tbl-conf tr, table.tbl-conf td { display: block; width: auto; }
+  table.tbl-conf tr { border: 1px solid var(--line); border-left: 4px solid var(--orange); border-radius: 10px; margin-bottom: 10px; padding: 6px 8px; }
+  table.tbl-conf td { border: 0; padding: 3px 2px; text-align: left; }
+  table.tbl-conf td.num { font-size: 17px; font-weight: 700; }
+  table.tbl-conf td:last-child { display: flex; gap: 8px; } table.tbl-conf td:last-child .btn { flex: 1; }
+}
