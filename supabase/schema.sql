@@ -520,3 +520,36 @@ alter table public.pendencias enable row level security;
 drop policy if exists socio_tudo on public.pendencias;
 create policy socio_tudo on public.pendencias for all to authenticated using (public.is_socio()) with check (public.is_socio());
 do $$ begin alter publication supabase_realtime add table public.pendencias; exception when duplicate_object then null; end $$;
+
+-- ============================================================
+-- v6 – Conciliação bancária, comprovantes (Storage) e orçamento × realizado
+-- ============================================================
+alter table public.movimentos add column if not exists conciliado_ref text;      -- id da transação no extrato (FITID do OFX ou hash da linha)
+alter table public.movimentos add column if not exists conciliado_conta text;    -- conta bancária conciliada (ex.: "Sicoob Logística")
+alter table public.movimentos add column if not exists conciliado_em timestamptz;
+alter table public.movimentos add column if not exists comprovante text;         -- caminho do arquivo no Storage (bucket comprovantes)
+create index if not exists movimentos_conciliado_ref_idx on public.movimentos (conciliado_ref);
+
+create table if not exists public.orcamentos (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id text not null references public.empresas(id),
+  categoria text not null,
+  ano int not null,
+  valor_mensal numeric(14,2) not null default 0,
+  obs text,
+  atualizado_em timestamptz default now(),
+  unique (empresa_id, categoria, ano)
+);
+alter table public.orcamentos enable row level security;
+drop policy if exists socio_tudo on public.orcamentos;
+create policy socio_tudo on public.orcamentos for all to authenticated using (public.is_socio()) with check (public.is_socio());
+do $$ begin alter publication supabase_realtime add table public.orcamentos; exception when duplicate_object then null; end $$;
+
+-- comprovantes: bucket privado, só sócios leem/gravam
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('comprovantes', 'comprovantes', false, 10485760)
+on conflict (id) do nothing;
+drop policy if exists comprovantes_socios on storage.objects;
+create policy comprovantes_socios on storage.objects for all to authenticated
+  using (bucket_id = 'comprovantes' and public.is_socio())
+  with check (bucket_id = 'comprovantes' and public.is_socio());

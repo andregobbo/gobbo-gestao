@@ -275,7 +275,7 @@ export function editar(tabela, reg) {
 // ---------------- layout ----------------
 const MENU_SOCIO = [
   ["#sec", "", "Holding"],
-  ["holding", "🏛️", "Visão geral"], ["fluxo", "💧", "Fluxo de caixa"], ["conferir", "⚑", "Conferência"], ["empresa", "🏢", "Empresas"], ["contas", "🗂️", "Contas (Kanban)"],
+  ["holding", "🏛️", "Visão geral"], ["fluxo", "💧", "Fluxo de caixa"], ["conciliacao", "🏦", "Conciliação bancária"], ["orcamento", "🎯", "Orçamento"], ["conferir", "⚑", "Conferência"], ["empresa", "🏢", "Empresas"], ["contas", "🗂️", "Contas (Kanban)"],
   ["livro", "🧾", "Livro-caixa"], ["socios", "🤝", "Sócios"], ["dividas", "💳", "Dívidas"],
   ["#sec", "", "Gobbo Logística"],
   ["painel", "📊", "Painel"], ["kanban", "🚚", "Kanban"], ["fechamento", "🧮", "Fechamento"], ["lancamentos", "📋", "Lançamentos"],
@@ -285,7 +285,14 @@ const BOTTOM_SOCIO = [["holding", "🏛️", "Geral"], ["conferir", "⚑", "Conf
 // itens aguardando o OK dos sócios (perguntas abertas + lançamentos marcados para conferir)
 const nConferir = () => (D().pendencias || []).filter(p => p.status !== "ok").length + (D().movimentos || []).filter(m => m.conferir).length;
 const MENU_MOT = [["kanban", "🗂️", "Minhas viagens"], ["diario", "✅", "Diário de bordo"], ["acerto", "💰", "Meu acerto"]];
-const ROTAS_HOLD = ["holding", "fluxo", "conferir", "empresa", "contas", "livro", "socios", "dividas", "menu"];
+// tema: automático (segue o sistema), escuro ou claro – escolha fica neste aparelho
+const temaAtual = () => { try { return localStorage.getItem("gobbo_tema") || "auto"; } catch { return "auto"; } };
+const escuro = () => temaAtual() === "dark" || (temaAtual() === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+function aplicarTema() { const t = temaAtual(); if (t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", escuro() ? "#0b1422" : "#0a2342"); }
+aplicarTema();
+const corLinha = () => (escuro() ? "#e3cc8f" : "#0b2e59");
+const ROTAS_HOLD = ["holding", "fluxo", "conciliacao", "orcamento", "conferir", "empresa", "contas", "livro", "socios", "dividas", "menu"];
 function layout(rota, titulo, corpo, acoes = "") {
   const menu = socio() ? MENU_SOCIO : MENU_MOT;
   // sócios veem a marca da holding; motoristas trabalham para a Logística
@@ -294,7 +301,7 @@ function layout(rota, titulo, corpo, acoes = "") {
     <aside class="side"><div class="brand"><img src="${logo}" alt="${esc(marca)}"></div>
       <nav>${menu.map(([r, i, l]) => r === "#sec" ? `<div class="sec">${l === EMPRESA_LOG ? `<img src="icons/logo-logistica.png" alt="" class="sec-logo">` : ""}${l}</div>` : `<a href="#${r}" class="${r === rota ? "on" : ""}"><span>${i}</span>${l}${r === "conferir" && nConferir() ? ` <b class="badge">${nConferir()}</b>` : ""}</a>`).join("")}</nav>
       <div class="user">${esc(S.perfil?.nome || "Demonstração")}<br><span class="muted">${db.getModo() === "demo" ? "modo demonstração" : esc(S.perfil?.papel || "")}</span><br>
-      <button id="sair">${db.getModo() === "demo" ? "Sair da demonstração" : "Sair"}</button></div></aside>
+      <button id="sair">${db.getModo() === "demo" ? "Sair da demonstração" : "Sair"}</button><button class="tema" id="bTema" title="Tema claro/escuro">${{ auto: "🌓 Auto", dark: "🌙 Escuro", light: "☀️ Claro" }[temaAtual()]}</button></div></aside>
     <main><div class="mobile-top"><img src="${logo}" alt="${esc(marca)}"><button class="btn sm" id="sair2">Sair</button></div>
       <div class="topbar"><h1>${esc(titulo)}</h1>${db.getModo() === "demo" ? '<span class="demo-flag">DEMONSTRAÇÃO</span>' : ""}${socio() ? `<button class="btn" id="bBusca" title="Buscar (Ctrl+K)">🔍 <span class="so-desk">Buscar <kbd>Ctrl K</kbd></span></button>` : ""}${acoes}</div>
       ${corpo}</main>
@@ -308,6 +315,7 @@ function layout(rota, titulo, corpo, acoes = "") {
   document.getElementById("sair").onclick = out;
   document.getElementById("sair2").onclick = out;
   const bb = document.getElementById("bBusca"); if (bb) bb.onclick = abrirBusca;
+  document.getElementById("bTema").onclick = () => { const prox = { auto: "dark", dark: "light", light: "auto" }[temaAtual()]; try { localStorage.setItem("gobbo_tema", prox); } catch { /* */ } aplicarTema(); render(); };
   const fab = document.getElementById("bFab"); if (fab) fab.onclick = () => editarMov(null, rota === "empresa" ? { empresa_id: S.emp } : {});
 }
 const seletorMes = () => `<input type="month" class="inp" id="ym" value="${S.ym}" aria-label="Mês">`;
@@ -322,6 +330,7 @@ async function grafico(id, cfg) {
   const el = document.getElementById(id);
   if (!el) return;
   Chart.defaults.font.family = getComputedStyle(document.documentElement).fontFamily;
+  Chart.defaults.color = escuro() ? "#b8c4d6" : "#4b5563"; Chart.defaults.borderColor = escuro() ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.08)";
   charts.push(new Chart(el, { ...cfg, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "top" } }, ...cfg.options } }));
 }
 const eixoBRL = { ticks: { callback: v => "R$ " + Number(v).toLocaleString("pt-BR", { notation: "compact" }) } };
@@ -904,6 +913,8 @@ const addMeses = (iso, k) => { if (!iso) return iso; const [y, m, d] = iso.split
 function editarMov(reg, base = {}) {
   if (!socio()) return toast("Somente sócios.", true);
   const obj = reg ? { ...reg, conferir: String(!!reg.conferir), maquina: "nao" } : { data: hoje, status: "pago", tipo: "despesa", conferir: "false", maquina: "nao", empresa_id: S.emp || "logistica", ...base };
+  let arquivoSel = null; // comprovante escolhido no formulário (enviado depois de salvar, quando já existe o id)
+  const anexar = async id => { if (!arquivoSel) return; const cam = await db.enviarComprovante(arquivoSel, id); await db.atualizar("movimentos", id, { comprovante: cam }); };
   const m = modal((reg ? "Editar" : "Novo") + " lançamento", FORM_MOV(!reg, obj), obj, async out => {
     out.conferir = out.conferir === "true";
     const maq = out.maquina === "sim"; delete out.maquina;
@@ -926,17 +937,27 @@ function editarMov(reg, base = {}) {
       for (let i = 0; i < rep; i++) {
         const p = { ...out, descricao: `${out.descricao} (${i + 1}/${rep})`, data: addMeses(out.data, i), vencimento: addMeses(venc0, i), status: i === 0 ? out.status : (out.status === "pago" ? "a_pagar" : out.status) };
         if (p.status === "pago") p.vencimento = null;
-        await db.salvar("movimentos", p);
+        const sv = await db.salvar("movimentos", p);
+        if (i === 0) await anexar(sv.id);
       }
       return;
     }
-    await db.salvar("movimentos", out);
-  }, reg ? () => db.excluir("movimentos", reg.id) : null);
+    const sv = await db.salvar("movimentos", out);
+    await anexar(sv.id);
+  }, reg ? async () => { if (reg.comprovante) await db.excluirComprovante(reg.comprovante); await db.excluir("movimentos", reg.id); } : null);
+  // comprovante (foto ou PDF) guardado no Storage privado
+  const bd = m.querySelector(".bd"), cx = document.createElement("div");
+  cx.className = "fld full anexo";
+  cx.innerHTML = `<label>Comprovante</label><div class="anexo-l">${reg?.comprovante ? `<button type="button" class="btn sm" id="vComp">📎 Ver comprovante</button>` : ""}
+    <label class="btn sm" style="cursor:pointer">${reg?.comprovante ? "Trocar" : "📎 Anexar foto ou PDF"}<input type="file" id="fComp" accept="image/*,application/pdf" hidden></label><span class="muted" id="nComp"></span></div>`;
+  bd.appendChild(cx);
+  cx.querySelector("#fComp").onchange = e => { arquivoSel = e.target.files[0] || null; cx.querySelector("#nComp").textContent = arquivoSel ? arquivoSel.name + " – será enviado ao salvar" : ""; };
+  const vc = cx.querySelector("#vComp"); if (vc) vc.onclick = () => tentar(async () => { const u = await db.urlComprovante(reg.comprovante); if (!u) throw new Error("arquivo indisponível"); window.open(u, "_blank", "noopener"); });
   // ações extras ao editar: duplicar e marcar como pago
   if (reg) {
     const ft = m.querySelector(".ft");
     const dup = document.createElement("button"); dup.type = "button"; dup.className = "btn"; dup.textContent = "Duplicar";
-    dup.onclick = () => { m.remove(); const { id, origem_ref, criado_em, atualizado_em, conferido_em, conferido_por, fonte, ...rest } = reg; editarMov(null, { ...rest, data: hoje }); };
+    dup.onclick = () => { m.remove(); const { id, origem_ref, criado_em, atualizado_em, conferido_em, conferido_por, fonte, comprovante, conciliado_ref, conciliado_conta, conciliado_em, ...rest } = reg; editarMov(null, { ...rest, data: hoje }); };
     ft.insertBefore(dup, ft.querySelector('[data-a="cancel"]'));
     if (reg.status !== "pago") {
       const pg = document.createElement("button"); pg.type = "button"; pg.className = "btn ok"; pg.textContent = reg.tipo === "receita" ? "✓ Recebido hoje" : "✓ Pago hoje";
@@ -950,7 +971,7 @@ function tabelaMov(ms, { emp = true, lim = 99999 } = {}) {
   return `<div class="tbl-wrap"><table><tr><th>Data</th>${emp ? "<th>Empresa</th>" : ""}<th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Sócio / quem pagou</th><th class="num">Valor</th></tr>
     ${ms.slice(0, lim).map(m => `<tr class="clk" data-mid="${m.id}"><td>${dataBR(m.data)}${m.status !== "pago" ? ` <span class="pill o">${m.status === "a_pagar" ? "a pagar" : "previsto"}</span>` : ""}</td>${emp ? `<td>${chipEmp(m.empresa_id)}</td>` : ""}
       <td>${esc(H.TIPO_NOME[m.tipo] || m.tipo)}</td><td>${esc(m.categoria || "")}</td>
-      <td>${m.conferir ? '<span class="pill r" title="' + esc(m.nota || "conferir") + '">conferir</span> ' : ""}${esc(m.descricao || "")}${m.valor_bruto ? ` <span class="muted">(bruto ${brl(m.valor_bruto)})</span>` : ""}</td>
+      <td>${m.conferir ? '<span class="pill r" title="' + esc(m.nota || "conferir") + '">conferir</span> ' : ""}${m.comprovante ? '<span title="tem comprovante">📎</span> ' : ""}${m.conciliado_em ? '<span class="pill g" title="conciliado com o extrato">✓ banco</span> ' : ""}${esc(m.descricao || "")}${m.valor_bruto ? ` <span class="muted">(bruto ${brl(m.valor_bruto)})</span>` : ""}</td>
       <td>${esc([m.socio_id && nomeSoc(m.socio_id), m.socio_destino_id && "→ " + nomeSoc(m.socio_destino_id), m.pago_por && "pago/recebido: " + nomePagador(m.pago_por)].filter(Boolean).join(" "))}</td>
       <td class="num">${valorFmt(m)}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Nenhum lançamento.</td></tr>`}</table></div>`;
 }
@@ -1310,14 +1331,153 @@ function viewFluxo() {
     if (v !== null) { try { localStorage.setItem("gobbo_saldo_caixa", String(numBR(v) || 0)); } catch { /* */ } render(); } };
   document.querySelectorAll("a[data-mid]").forEach(a => a.onclick = e => { e.preventDefault(); editarMov(d.movimentos.find(m => m.id === a.dataset.mid)); });
   grafico("cFxP", { data: { labels: sem.map(w => dataBR(w.de).slice(0, 5)), datasets: [
-    { type: "line", label: "Saldo acumulado", data: sem.map(w => w.saldo), borderColor: "#0b2e59", backgroundColor: "#0b2e59", tension: .25, yAxisID: "y" },
+    { type: "line", label: "Saldo acumulado", data: sem.map(w => w.saldo), borderColor: corLinha(), backgroundColor: corLinha(), tension: .25, yAxisID: "y" },
     { type: "bar", label: "Entradas", data: sem.map(w => w.ent), backgroundColor: "#2e9e4f", borderRadius: 4 },
     { type: "bar", label: "Saídas", data: sem.map(w => -w.sai), backgroundColor: "#c62828", borderRadius: 4 }] }, options: { scales: { y: eixoBRL } } });
   grafico("cFxR", { data: { labels: real.map(x => C.MES_AB[Number(x.ym.slice(5)) - 1] + "/" + x.ym.slice(2, 4)), datasets: [
-    { type: "line", label: "Operacional líquido", data: real.map(x => x.ent - x.sai), borderColor: "#0b2e59", backgroundColor: "#0b2e59", tension: .25 },
+    { type: "line", label: "Operacional líquido", data: real.map(x => x.ent - x.sai), borderColor: corLinha(), backgroundColor: corLinha(), tension: .25 },
     { type: "bar", label: "Entradas", data: real.map(x => x.ent), backgroundColor: "#2e9e4f", borderRadius: 4 },
     { type: "bar", label: "Saídas", data: real.map(x => -x.sai), backgroundColor: "#c62828", borderRadius: 4 },
     { type: "bar", label: "Financiamento (líq.)", data: real.map(x => x.fin), backgroundColor: "#c9a23f", borderRadius: 4 }] }, options: { scales: { y: eixoBRL } } });
+}
+
+
+// ---------------- conciliação bancária (extrato OFX/CSV × lançamentos) ----------------
+S.cc = S.cc || { emp: "logistica", conta: "", linhas: [], arquivo: "" };
+const ENTRADA = ["receita", "aporte", "emprestimo_entrada"];
+function lerOFX(txt) {
+  const tag = (b, t) => (b.match(new RegExp("<" + t + ">([^<\\r\\n]*)", "i")) || [])[1]?.trim() || "";
+  const conta = tag(txt, "ACCTID");
+  const linhas = [...txt.matchAll(/<STMTTRN>([\s\S]*?)(?:<\/STMTTRN>|(?=<STMTTRN>)|<\/BANKTRANLIST>)/gi)].map(([, b]) => {
+    const dt = tag(b, "DTPOSTED"), v = Number(tag(b, "TRNAMT").replace(",", "."));
+    return { ref: tag(b, "FITID") || `${dt}|${v}|${tag(b, "MEMO")}`, data: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`, valor: v, desc: [tag(b, "NAME"), tag(b, "MEMO")].filter(Boolean).join(" – ") };
+  }).filter(l => l.valor && /^\d{4}-\d\d-\d\d$/.test(l.data));
+  return { conta, linhas };
+}
+function lerCSV(txt) {
+  const sep = (txt.split("\n")[0].match(/;/g) || []).length >= (txt.split("\n")[0].match(/,/g) || []).length ? ";" : ",";
+  const linhas = [];
+  txt.split(/\r?\n/).forEach((ln, i) => {
+    const cols = ln.split(sep).map(c => c.replace(/^"|"$/g, "").trim()); if (cols.length < 2) return;
+    const iData = cols.findIndex(c => /^\d{2}\/\d{2}\/\d{2,4}$/.test(c) || /^\d{4}-\d{2}-\d{2}$/.test(c)); if (iData < 0) return;
+    const nums = cols.map((c, k) => [k, /^-?\(?R?\$?\s*-?[\d.]+,\d{2}\)?[CD]?$|^-?\d+\.\d{2}$/.test(c.replace(/\s/g, "")) ? c : null]).filter(([, c]) => c);
+    if (!nums.length) return;
+    let [, vt] = nums[0]; const neg = /^-|\(|D$/.test(vt.replace(/\s/g, ""));
+    let v = numBR(vt.replace(/[()CD\s]/g, "").replace(/^-/, "")); if (v === null) return; if (neg) v = -v;
+    const d = cols[iData], data = d.includes("/") ? `${d.length === 8 ? "20" + d.slice(6) : d.slice(6)}-${d.slice(3, 5)}-${d.slice(0, 2)}` : d;
+    const desc = cols.filter((c, k) => k !== iData && !nums.some(([j]) => j === k)).sort((a, b) => b.length - a.length)[0] || "";
+    if (/saldo/i.test(desc)) return;
+    linhas.push({ ref: `${data}|${v}|${desc}|${i}`, data, valor: v, desc });
+  });
+  return { conta: "", linhas };
+}
+const ignorados = () => { try { return JSON.parse(localStorage.getItem("gobbo_conc_ign") || "[]"); } catch { return []; } };
+function conciliar(linhas, emp) {
+  const usados = new Set(), ms = (D().movimentos || []).filter(m => NAT[m.tipo] && caixaDe(m) === emp);
+  const ign = ignorados();
+  return linhas.map(l => {
+    const ja = ms.find(m => m.conciliado_ref === l.ref);
+    if (ja) { usados.add(ja.id); return { ...l, st: "ok", m: ja }; }
+    if (ign.includes(l.ref)) return { ...l, st: "ign" };
+    const cand = ms.filter(m => !usados.has(m.id) && !m.conciliado_ref && Math.abs(n(m.valor) - Math.abs(l.valor)) < 0.01 && (ENTRADA.includes(m.tipo) === l.valor > 0))
+      .map(m => ({ m, dd: Math.abs((new Date(l.data) - new Date(m.status === "pago" ? m.data : (m.vencimento || m.data))) / 864e5) })).filter(x => x.dd <= 6).sort((a, b) => a.dd - b.dd);
+    if (cand.length) { usados.add(cand[0].m.id); return { ...l, st: "sug", m: cand[0].m, dd: cand[0].dd }; }
+    return { ...l, st: "novo" };
+  });
+}
+function viewConciliacao() {
+  const f = S.cc, res = f.linhas.length ? conciliar(f.linhas, f.emp) : [];
+  const cnt = k => res.filter(r => r.st === k).length;
+  const de = res.length ? res.reduce((a, r) => (r.data < a ? r.data : a), res[0].data) : null, ate = res.length ? res.reduce((a, r) => (r.data > a ? r.data : a), res[0].data) : null;
+  const ids = new Set(res.filter(r => r.m).map(r => r.m.id));
+  const soSistema = de ? (D().movimentos || []).filter(m => NAT[m.tipo] && caixaDe(m) === f.emp && m.status === "pago" && m.data >= de && m.data <= ate && !ids.has(m.id) && !m.conciliado_ref).sort((a, b) => a.data.localeCompare(b.data)) : [];
+  const ST = { ok: ["g", "Conciliado"], sug: ["o", "Sugestão"], novo: ["r", "Não lançado"], ign: ["", "Ignorado"] };
+  const corpo = `
+  <div class="card"><div class="filters" style="margin:0;align-items:center">
+    <span><b>Conta da empresa:</b></span><select class="sel" id="ccEmp">${opts(empOpts().filter(([id]) => id !== "familia"), f.emp, false)}</select>
+    <input class="inp" id="ccConta" placeholder="Nome da conta (ex.: Sicoob Logística)" value="${esc(f.conta)}" style="min-width:220px">
+    <label class="btn pri" style="cursor:pointer">⬆ Importar extrato (OFX ou CSV)<input type="file" id="ccArq" accept=".ofx,.csv,.txt" hidden></label>
+    ${f.arquivo ? `<span class="muted">${esc(f.arquivo)} · ${f.linhas.length} linhas · ${dataBR(de)} a ${dataBR(ate)}</span>` : ""}</div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">No internet banking, exporte o extrato em <b>OFX</b> (Money/Quicken) – é o formato mais confiável; CSV também funciona. O arquivo é lido só no seu navegador; ficam gravados apenas os vínculos dos lançamentos conciliados.</p></div>
+  ${res.length ? `<div class="kpis">${kpi("Linhas do extrato", res.length, brl0(soma(res.filter(r => r.valor > 0), r => r.valor)) + " entradas", "navy")}${kpi("Conciliadas", cnt("ok"), "já batem com o sistema", "green")}
+    ${kpi("Sugestões", cnt("sug"), "confirme com um toque", "orange")}${kpi("Não lançadas", cnt("novo"), "estão no banco, faltam no sistema", cnt("novo") ? "red" : "green")}
+    ${kpi("Só no sistema", soSistema.length, "pagas no período mas fora do extrato", soSistema.length ? "red" : "green")}${kpi("Diferença", brl0(soma(res, r => r.valor) - soma(res.filter(r => r.m), r => (ENTRADA.includes(r.m.tipo) ? 1 : -1) * n(r.m.valor))), "extrato − conciliado", "")}</div>
+  <div class="card"><div class="filters" style="margin:0 0 10px"><h3 style="margin:0;flex:1">Extrato × sistema</h3>
+    ${cnt("sug") ? `<button class="btn ok" id="ccTodas">✓ Confirmar as ${cnt("sug")} sugestões</button>` : ""}</div>
+    <div class="tbl-wrap"><table class="tbl-cc"><tr><th>Data</th><th>Extrato</th><th class="num">Valor</th><th>Situação</th><th>No sistema</th><th></th></tr>
+    ${res.sort((a, b) => ({ novo: 0, sug: 1, ok: 2, ign: 3 }[a.st] - { novo: 0, sug: 1, ok: 2, ign: 3 }[b.st]) || a.data.localeCompare(b.data)).map((r, i) => `<tr class="cc-${r.st}"><td>${dataBR(r.data)}</td><td style="font-size:13px">${esc(r.desc)}</td>
+      <td class="num ${r.valor < 0 ? "neg" : "pos"}">${brl(r.valor)}</td><td><span class="pill ${ST[r.st][0]}">${ST[r.st][1]}</span>${r.st === "sug" && r.dd ? ` <span class="muted" style="font-size:11px">${Math.round(r.dd)}d</span>` : ""}</td>
+      <td style="font-size:13px">${r.m ? `<a href="#" data-mv="${r.m.id}">${dataBR(r.m.data)} · ${esc(r.m.descricao || "")}</a>${r.m.status !== "pago" ? ' <span class="pill o">em aberto</span>' : ""}` : ""}</td>
+      <td style="white-space:nowrap">${r.st === "sug" ? `<button class="btn sm ok" data-conf="${i}">✓</button> ` : ""}${r.st === "novo" ? `<button class="btn sm pri" data-lanc="${i}">+ Lançar</button> <button class="btn sm" data-ign="${i}" title="Ex.: transferência entre contas próprias">Ignorar</button>` : ""}${r.st === "ign" ? `<button class="btn sm" data-design="${i}">Desfazer</button>` : ""}</td></tr>`).join("")}</table></div></div>
+  ${soSistema.length ? `<div class="card"><h3>Lançados como pagos pela ${esc(curtoEmp(f.emp))} no período, mas não aparecem no extrato</h3>
+    <p class="muted" style="font-size:12px">Podem ter saído de outra conta, ter data/valor diferente ou não ter acontecido. Abra e corrija quem pagou, a data ou o valor.</p>${tabelaMov(soSistema, { emp: false, lim: 300 })}</div>` : ""}`
+  : `<div class="card"><p class="muted">Importe um extrato para começar.</p></div>`}`;
+  layout("conciliacao", "Conciliação bancária", corpo);
+  const resOrd = res; // já ordenado acima (o índice data-* aponta para esta lista)
+  document.getElementById("ccEmp").onchange = e => { f.emp = e.target.value; render(); };
+  document.getElementById("ccConta").onchange = e => { f.conta = e.target.value; };
+  document.getElementById("ccArq").onchange = async e => { const file = e.target.files[0]; if (!file) return;
+    const txt = await file.text(); const r = /<OFX>|<STMTTRN>/i.test(txt) ? lerOFX(txt) : lerCSV(txt);
+    if (!r.linhas.length) return toast("Não reconheci lançamentos nesse arquivo. Tente exportar em OFX.", true);
+    f.linhas = r.linhas; f.arquivo = file.name; if (r.conta && !f.conta) f.conta = r.conta; render(); };
+  const vinc = (r, extra = {}) => db.atualizar("movimentos", r.m.id, { conciliado_ref: r.ref, conciliado_conta: f.conta || curtoEmp(f.emp), conciliado_em: new Date().toISOString(),
+    ...(r.m.status !== "pago" ? { status: "pago", data: r.data } : {}), atualizado_em: new Date().toISOString(), ...extra });
+  document.querySelectorAll("[data-conf]").forEach(b => b.onclick = () => tentar(() => vinc(resOrd[b.dataset.conf]), "Conciliado ✓"));
+  const todas = document.getElementById("ccTodas");
+  if (todas) todas.onclick = () => tentar(async () => { for (const r of resOrd.filter(x => x.st === "sug")) await vinc(r); }, "Sugestões conciliadas ✓");
+  document.querySelectorAll("[data-lanc]").forEach(b => b.onclick = () => { const r = resOrd[b.dataset.lanc];
+    editarMov(null, { data: r.data, valor: Math.abs(r.valor), tipo: r.valor < 0 ? "despesa" : "receita", descricao: r.desc, empresa_id: f.emp, status: "pago",
+      conciliado_ref: r.ref, conciliado_conta: f.conta || curtoEmp(f.emp), conciliado_em: new Date().toISOString(), fonte: "Extrato " + (f.conta || curtoEmp(f.emp)) }); });
+  const setIgn = (ref, on) => { const l = ignorados().filter(x => x !== ref); if (on) l.push(ref); try { localStorage.setItem("gobbo_conc_ign", JSON.stringify(l)); } catch { /* */ } render(); };
+  document.querySelectorAll("[data-ign]").forEach(b => b.onclick = () => setIgn(resOrd[b.dataset.ign].ref, true));
+  document.querySelectorAll("[data-design]").forEach(b => b.onclick = () => setIgn(resOrd[b.dataset.design].ref, false));
+  document.querySelectorAll("[data-mv]").forEach(a => a.onclick = e => { e.preventDefault(); editarMov(D().movimentos.find(m => m.id === a.dataset.mv)); });
+  ligarTabelaMov();
+}
+
+
+// ---------------- orçamento × realizado ----------------
+S.orc = S.orc || { emp: "logistica" };
+function viewOrcamento() {
+  const d = D(), f = S.orc, ano = Number(S.ym.slice(0, 4)) || Number(hoje.slice(0, 4)), ym = S.ym;
+  const mesN = Number(ym.slice(5, 7)), mesesAte = ym.slice(0, 4) === String(ano) ? mesN : 12;
+  const orcs = (d.orcamentos || []).filter(o => o.empresa_id === f.emp && Number(o.ano) === ano);
+  const desp = (d.movimentos || []).filter(m => m.empresa_id === f.emp && m.tipo === "despesa" && m.status === "pago");
+  const realMes = c => soma(desp.filter(m => (m.categoria || "Sem categoria") === c && m.data.startsWith(ym)), m => m.valor);
+  const realAno = c => soma(desp.filter(m => (m.categoria || "Sem categoria") === c && m.data.startsWith(String(ano)) && m.data.slice(0, 7) <= ym), m => m.valor);
+  const ini6 = addMeses(ym + "-01", -6).slice(0, 7);
+  const media6 = c => soma(desp.filter(m => (m.categoria || "Sem categoria") === c && m.data.slice(0, 7) >= ini6 && m.data.slice(0, 7) < ym), m => m.valor) / 6;
+  const cats = [...new Set([...orcs.map(o => o.categoria), ...desp.filter(m => m.data >= addMeses(ym + "-01", -12)).map(m => m.categoria || "Sem categoria")])]
+    .map(c => ({ c, o: orcs.find(x => x.categoria === c), mes: realMes(c), anoR: realAno(c), med: media6(c) }))
+    .sort((a, b) => (n(b.o?.valor_mensal) || b.med) - (n(a.o?.valor_mensal) || a.med));
+  const tot = { orc: soma(cats, x => n(x.o?.valor_mensal)), mes: soma(cats, x => x.mes), anoR: soma(cats, x => x.anoR) };
+  const barra = (real, orc) => { if (!orc) return `<span class="muted" style="font-size:12px">sem orçamento</span>`; const p = real / orc;
+    return `<div class="orc-b"><i class="${p > 1 ? "over" : p > .85 ? "warn" : ""}" style="width:${Math.min(100, p * 100)}%"></i></div><span class="${p > 1 ? "neg" : ""}" style="font-size:12px">${pct(p)}</span>`; };
+  const corpo = `
+  <div class="kpis">${kpi("Orçamento do mês", brl0(tot.orc), cats.filter(x => x.o).length + " categorias com teto", "navy")}
+    ${kpi("Gasto no mês", `<span class="${tot.orc && tot.mes > tot.orc ? "neg" : ""}">${brl0(tot.mes)}</span>`, tot.orc ? pct(tot.mes / tot.orc) + " do orçado" : "", tot.orc && tot.mes > tot.orc ? "red" : "green")}
+    ${kpi("Disponível no mês", `<span class="${tot.orc - tot.mes < 0 ? "neg" : ""}">${brl0(tot.orc - tot.mes)}</span>`, "orçado − gasto", "gd")}
+    ${kpi("Acumulado no ano", brl0(tot.anoR), "orçado " + brl0(tot.orc * mesesAte) + " até " + C.MES_AB[mesN - 1], tot.orc && tot.anoR > tot.orc * mesesAte ? "red" : "")}
+    ${kpi("Estouros no mês", cats.filter(x => x.o && x.mes > n(x.o.valor_mensal)).length, "categorias acima do teto", cats.some(x => x.o && x.mes > n(x.o.valor_mensal)) ? "red" : "green")}
+    ${kpi("Média de despesas", brl0(soma(cats, x => x.med)), "por mês – últimos 6 meses", "orange")}</div>
+  <div class="card"><div class="filters" style="margin:0 0 10px"><h3 style="margin:0;flex:1">Teto mensal por categoria – ${esc(curtoEmp(f.emp))} ${ano}</h3>
+    <button class="btn" id="orSug">✨ Sugerir pela média dos últimos 6 meses</button><button class="btn pri" id="orSalvar">Salvar orçamento</button></div>
+    <div class="tbl-wrap"><table class="tbl-orc"><tr><th>Categoria</th><th class="num">Média 6m</th><th class="num">Teto mensal</th><th class="num">Gasto em ${C.MES_AB[mesN - 1]}</th><th>Uso no mês</th><th class="num">Acumulado ${ano}</th><th>Uso no ano</th></tr>
+    ${cats.map((x, i) => `<tr><td>${esc(x.c)}</td><td class="num muted">${brl0(x.med)}</td>
+      <td class="num"><input class="inp orc-in" data-i="${i}" inputmode="decimal" value="${x.o ? String(n(x.o.valor_mensal)).replace(".", ",") : ""}" placeholder="—"></td>
+      <td class="num">${brl0(x.mes)}</td><td>${barra(x.mes, n(x.o?.valor_mensal))}</td><td class="num">${brl0(x.anoR)}</td><td>${barra(x.anoR, n(x.o?.valor_mensal) * mesesAte)}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">Sem despesas nos últimos 12 meses.</td></tr>`}
+    <tr class="tot"><td>Total</td><td class="num">${brl0(soma(cats, x => x.med))}</td><td class="num">${brl0(tot.orc)}</td><td class="num">${brl0(tot.mes)}</td><td>${barra(tot.mes, tot.orc)}</td><td class="num">${brl0(tot.anoR)}</td><td>${barra(tot.anoR, tot.orc * mesesAte)}</td></tr></table></div>
+    <p class="muted" style="font-size:12px">Teto vale para todos os meses do ano. Deixe em branco a categoria que não quer controlar. Gasto = despesas pagas da empresa (o que outra empresa ou sócio pagou por ela também conta).</p></div>`;
+  layout("orcamento", "Orçamento × realizado", corpo, `<select class="sel" id="orEmp">${opts(empOpts(), f.emp, false)}</select>` + seletorMes());
+  ligarMes();
+  document.getElementById("orEmp").onchange = e => { f.emp = e.target.value; render(); };
+  document.getElementById("orSug").onclick = () => document.querySelectorAll(".orc-in").forEach(inp => { const x = cats[inp.dataset.i]; if (!inp.value && x.med >= 1) inp.value = String(Math.ceil(x.med / 50) * 50).replace(".", ","); });
+  document.getElementById("orSalvar").onclick = () => tentar(async () => {
+    const regs = [...document.querySelectorAll(".orc-in")].map(inp => { const x = cats[inp.dataset.i], v = numBR(inp.value);
+      if (v === null && !x.o) return null; return { id: x.o?.id || db.uuid(), empresa_id: f.emp, categoria: x.c, ano, valor_mensal: v || 0, atualizado_em: new Date().toISOString() }; }).filter(Boolean);
+    if (!regs.length) throw new Error("Preencha pelo menos um teto.");
+    await db.salvarMuitos("orcamentos", regs, "id");
+  }, "Orçamento salvo ✓");
 }
 
 // ---------------- busca rápida (Ctrl+K / ⌘K) ----------------
@@ -1354,7 +1514,7 @@ function render() {
   limparCharts();
   let rota = (location.hash || "#").slice(1) || (socio() ? "holding" : "kanban");
   if (!socio() && !["kanban", "acerto", "diario"].includes(rota)) rota = "kanban";
-  ({ holding: viewHolding, fluxo: viewFluxo, conferir: viewConferir, empresa: viewEmpresa, contas: viewContas, livro: viewLivro, socios: viewSocios, dividas: viewDividas, menu: viewMenu,
+  ({ holding: viewHolding, fluxo: viewFluxo, conciliacao: viewConciliacao, orcamento: viewOrcamento, conferir: viewConferir, empresa: viewEmpresa, contas: viewContas, livro: viewLivro, socios: viewSocios, dividas: viewDividas, menu: viewMenu,
     painel: viewPainel, kanban: viewKanban, fechamento: viewFechamento, lancamentos: viewLanc, relatorios: viewRel, cadastros: viewCad, acerto: viewAcerto, frota: viewFrota, diario: viewDiario }[rota] || viewPainel)();
 }
 window.addEventListener("hashchange", render);

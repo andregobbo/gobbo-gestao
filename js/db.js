@@ -3,7 +3,7 @@ import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 export const TABELAS = ["config", "categorias", "caminhoes", "motoristas", "tabela_fretes", "semanas",
   "fretes", "despesas", "recebimentos", "acertos", "manutencoes", "abastecimentos", "planos_manutencao", "checklists", "bonus_media",
-  "empresas", "socios", "dividas", "movimentos", "pendencias"];
+  "empresas", "socios", "dividas", "movimentos", "pendencias", "orcamentos"];
 
 const DEMO_KEY = "gobbo_demo_v1";
 let sb = null;
@@ -216,4 +216,29 @@ export async function rpc(fn, args = {}) {
   if (error) throw new Error(error.message);
   await recarregar();
   return data;
+}
+
+// ---------------- comprovantes (Supabase Storage, bucket privado) ----------------
+const demoArquivos = new Map(); // modo demonstração: arquivo fica só nesta aba
+export async function enviarComprovante(file, movId) {
+  const ext = (file.name.match(/\.[a-z0-9]+$/i)?.[0] || "").toLowerCase();
+  const caminho = `${movId}/${Date.now()}${ext}`;
+  if (modo === "demo") { demoArquivos.set(caminho, URL.createObjectURL(file)); return caminho; }
+  const cli = await supabase();
+  const { error } = await cli.storage.from("comprovantes").upload(caminho, file, { upsert: false, contentType: file.type || undefined });
+  if (error) throw new Error(error.message);
+  return caminho;
+}
+export async function urlComprovante(caminho) {
+  if (!caminho) return null;
+  if (modo === "demo") return demoArquivos.get(caminho) || null;
+  const cli = await supabase();
+  const { data, error } = await cli.storage.from("comprovantes").createSignedUrl(caminho, 3600);
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
+}
+export async function excluirComprovante(caminho) {
+  if (!caminho || modo === "demo") { demoArquivos.delete(caminho); return; }
+  const cli = await supabase();
+  await cli.storage.from("comprovantes").remove([caminho]);
 }
