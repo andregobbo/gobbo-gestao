@@ -303,6 +303,7 @@ function layout(rota, titulo, corpo, acoes = "") {
       <div class="user">${esc(S.perfil?.nome || "Demonstração")}<br><span class="muted">${db.getModo() === "demo" ? "modo demonstração" : esc(S.perfil?.papel || "")}</span><br>
       <button id="sair">${db.getModo() === "demo" ? "Sair da demonstração" : "Sair"}</button><button class="tema" id="bTema" title="Tema claro/escuro">${{ auto: "🌓 Auto", dark: "🌙 Escuro", light: "☀️ Claro" }[temaAtual()]}</button></div></aside>
     <main><div class="mobile-top"><img src="${logo}" alt="${esc(marca)}"><button class="btn sm" id="sair2">Sair</button></div>
+      ${db.emCopiaLocal() ? `<div class="card aviso"><b>Sem conexão:</b> mostrando os dados salvos neste aparelho em ${new Date(db.emCopiaLocal()).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}. Alterações ficam bloqueadas até reconectar. <button class="btn sm" onclick="location.reload()">Reconectar</button></div>` : ""}
       <div class="topbar"><h1>${esc(titulo)}</h1>${db.getModo() === "demo" ? '<span class="demo-flag">DEMONSTRAÇÃO</span>' : ""}${socio() ? `<button class="btn" id="bBusca" title="Buscar (Ctrl+K)">🔍 <span class="so-desk">Buscar <kbd>Ctrl K</kbd></span></button>` : ""}${acoes}</div>
       ${corpo}</main>
     ${socio() && ROTAS_HOLD.includes(rota) ? `<button class="fab" id="bFab" aria-label="Novo lançamento" title="Novo lançamento">+</button>` : ""}
@@ -1526,6 +1527,7 @@ function telaLogin(msg = "") {
     <div class="fld"><label for="pw">Senha</label><input id="pw" type="password" autocomplete="current-password" required minlength="6"></div>
     <div class="fld hidden" id="nomeBox"><label for="nm">Seu nome</label><input id="nm" autocomplete="name"></div>
     <button class="btn pri" id="bEntrar">Entrar</button></form>
+    <div class="alt"><a href="#" id="esqueci">Esqueci minha senha</a></div>
     <div class="alt"><a href="#" id="toggle">Primeiro acesso? Criar acesso</a></div>
     <div class="alt"><a href="#" id="demo">Ver demonstração com os dados de setembro</a></div>
     ${msg ? `<p class="note" style="color:var(--red)">${esc(msg)}</p>` : ""}
@@ -1538,6 +1540,11 @@ function telaLogin(msg = "") {
     e.target.textContent = criando ? "Já tenho acesso – entrar" : "Primeiro acesso? Criar acesso";
   };
   document.getElementById("demo").onclick = e => { e.preventDefault(); try { localStorage.setItem("gobbo_modo", "demo"); } catch { /* */ } iniciar(); };
+  document.getElementById("esqueci").onclick = async e => { e.preventDefault();
+    const em = document.getElementById("em").value.trim() || prompt("Seu e-mail de acesso:");
+    if (!em) return;
+    try { await db.recuperarSenha(em); telaLogin("Enviamos um link para " + em + ". Abra o e-mail neste aparelho e toque no link para criar a nova senha."); }
+    catch (err) { telaLogin(traduzErro(err.message)); } };
   document.getElementById("fLogin").onsubmit = async e => {
     e.preventDefault();
     const em = document.getElementById("em").value.trim(), pw = document.getElementById("pw").value;
@@ -1562,6 +1569,25 @@ function telaSemBanco() {
   document.getElementById("again").onclick = () => iniciar();
 }
 
+const VERSAO = "v12";
+const perfilSalvo = () => { try { return JSON.parse(localStorage.getItem("gobbo_perfil") || "null"); } catch { return null; } };
+// erro inesperado em qualquer tela: avisa sem derrubar o app e registra para diagnóstico
+window.addEventListener("error", ev => db.registrarErro("tela", ev.error || ev.message, VERSAO));
+window.addEventListener("unhandledrejection", ev => db.registrarErro("promessa", ev.reason, VERSAO));
+function telaErro(titulo, e, podeCopia) {
+  root.innerHTML = `<div class="login"><div class="box"><img src="icons/logo.svg" alt="${esc(EMPRESA)}"><h2>${esc(titulo)}</h2>
+    <p class="note" style="text-align:left">${esc(e?.message || String(e))}</p>
+    <button class="btn pri" id="again">Tentar novamente</button>
+    ${podeCopia ? `<button class="btn" style="margin-top:8px" id="copia">Abrir últimos dados salvos neste aparelho</button>` : ""}
+    <button class="btn" style="margin-top:8px" id="sairE">Sair e entrar de novo</button></div></div>`;
+  document.getElementById("again").onclick = () => iniciar();
+  const c = document.getElementById("copia"); if (c) c.onclick = () => { if (perfilSalvo() && db.abrirCopia()) { S.perfil = perfilSalvo(); desenhar(); } };
+  document.getElementById("sairE").onclick = async () => { await db.sair(); telaLogin(); };
+}
+function desenhar() {
+  try { render(); }
+  catch (e) { db.registrarErro("render", e, VERSAO); telaErro("Não consegui montar esta tela", e, false); }
+}
 async function iniciar() {
   let demo = false;
   try { demo = localStorage.getItem("gobbo_modo") === "demo" || new URLSearchParams(location.search).has("demo"); } catch { /* */ }
@@ -1573,18 +1599,29 @@ async function iniciar() {
     db.aoMudar(() => render());
     return render();
   }
+  let etapa = "conexão";
   try {
-    if (!(await db.bancoPronto())) return telaSemBanco();
+    if (!(await db.bancoPronto())) {
+      // sem resposta do servidor: se já entrou antes neste aparelho, abre a última cópia
+      if (perfilSalvo() && db.abrirCopia()) { S.perfil = perfilSalvo(); return desenhar(); }
+      return telaErro("Sem conexão com o servidor", new Error("Verifique a internet do aparelho e tente de novo."), false);
+    }
+    etapa = "sessão";
     const sessao = await db.sessaoAtual();
     if (!sessao) return telaLogin();
+    etapa = "perfil";
     S.perfil = await db.meuPerfil();
+    try { localStorage.setItem("gobbo_perfil", JSON.stringify(S.perfil)); } catch { /* */ }
+    etapa = "dados";
     await db.iniciarSupabase();
-    db.aoMudar(() => { if (!document.querySelector(".modal")) render(); });
-    render();
-    autoBonus();
   } catch (e) {
-    telaLogin("Sem conexão com o servidor: " + e.message);
+    db.registrarErro(etapa, e, VERSAO);
+    if (perfilSalvo() && db.abrirCopia()) { S.perfil = S.perfil || perfilSalvo(); toast("Servidor não respondeu – mostrando os últimos dados salvos neste aparelho.", true); return desenhar(); }
+    return telaErro("Sem conexão com o servidor (" + etapa + ")", e, false);
   }
+  db.aoMudar(() => { if (!document.querySelector(".modal")) desenhar(); });
+  desenhar();
+  autoBonus().catch(e => db.registrarErro("bonus", e, VERSAO));
 }
 
 async function autoBonus() {
@@ -1595,4 +1632,14 @@ async function autoBonus() {
 }
 
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+// link "esqueci minha senha": o Supabase volta com a sessão de recuperação → pede a nova senha
+db.aoEventoAuth(ev => { if (ev === "PASSWORD_RECOVERY") novaSenha(); }).catch(() => {});
+function novaSenha() {
+  modal("Criar nova senha", [{ k: "s1", label: "Nova senha (mínimo 6 caracteres)", type: "password", required: true, full: true },
+    { k: "s2", label: "Repita a nova senha", type: "password", required: true, full: true }], {}, async out => {
+    if ((out.s1 || "").length < 6) throw new Error("A senha precisa ter pelo menos 6 caracteres.");
+    if (out.s1 !== out.s2) throw new Error("As duas senhas não são iguais.");
+    await db.trocarSenha(out.s1); iniciar();
+  });
+}
 iniciar();

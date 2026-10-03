@@ -553,3 +553,18 @@ drop policy if exists comprovantes_socios on storage.objects;
 create policy comprovantes_socios on storage.objects for all to authenticated
   using (bucket_id = 'comprovantes' and public.is_socio())
   with check (bucket_id = 'comprovantes' and public.is_socio());
+
+-- ============================================================
+-- v7 – Registro de erros do app (diagnóstico de aparelhos)
+-- ============================================================
+create table if not exists public.erros_app (
+  id uuid primary key default gen_random_uuid(),
+  criado_em timestamptz default now(),
+  usuario uuid default auth.uid(),
+  etapa text, mensagem text, detalhe text, aparelho text, versao text
+);
+alter table public.erros_app enable row level security;
+drop policy if exists registra on public.erros_app;
+create policy registra on public.erros_app for insert to authenticated with check (usuario = auth.uid());
+drop policy if exists socio_le on public.erros_app;
+create policy socio_le on public.erros_app for select to authenticated using (public.is_socio());

@@ -71,10 +71,20 @@ function agendarRecarga() {
 }
 
 // Supabase devolve no máximo 1000 linhas por consulta: busca em páginas.
+// Rede de celular falha às vezes ("Load failed" no iPhone): cada página tenta até 3 vezes.
+async function pagina(cli, t, de) {
+  let ult;
+  for (let i = 0; i < 3; i++) {
+    try { const r = await cli.from(t).select("*").range(de, de + 999); if (!r.error) return r; ult = r; }
+    catch (e) { ult = { error: { message: e.message } }; }
+    await new Promise(ok => setTimeout(ok, 700 * (i + 1)));
+  }
+  return ult;
+}
 async function buscarTudo(cli, t) {
   let todos = [], de = 0;
   for (;;) {
-    const r = await cli.from(t).select("*").range(de, de + 999);
+    const r = await pagina(cli, t, de);
     if (r.error) return r;
     todos = todos.concat(r.data || []);
     if (!r.data || r.data.length < 1000) return { data: todos };
@@ -86,15 +96,30 @@ export async function recarregar() {
   if (modo !== "supabase") return cache;
   const cli = await supabase();
   const res = await Promise.all(TABELAS.map(t => buscarTudo(cli, t)));
+  const falhas = res.map((r, i) => r.error && TABELAS[i]).filter(Boolean);
+  // sem os lançamentos não dá para mostrar nada confiável: avisa quem chamou (abre a cópia local)
+  if (falhas.includes("movimentos")) throw new Error("não foi possível baixar os lançamentos (" + res[TABELAS.indexOf("movimentos")].error.message + ")");
   const novo = {};
-  res.forEach((r, i) => {
-    if (r.error) console.warn(TABELAS[i], r.error.message);
-    novo[TABELAS[i]] = r.data || [];
-  });
-  cache = novo;
+  res.forEach((r, i) => { novo[TABELAS[i]] = r.data || (cache[TABELAS[i]] || []); });
+  if (falhas.length) console.warn("tabelas com falha:", falhas.join(", "));
+  cache = novo; offline = null;
+  guardarCopia();
   avisar();
   return cache;
 }
+
+// ---------------- cópia local (abre o app sem sinal / com rede ruim) ----------------
+const COPIA_KEY = "gobbo_copia_v1";
+let offline = null; // data/hora da cópia em uso quando o servidor não respondeu
+export const emCopiaLocal = () => offline;
+function guardarCopia() {
+  try { localStorage.setItem(COPIA_KEY, JSON.stringify({ em: new Date().toISOString(), dados: cache })); } catch { /* sem espaço: segue sem cópia */ }
+}
+export function abrirCopia() {
+  try { const c = JSON.parse(localStorage.getItem(COPIA_KEY) || "null"); if (!c?.dados?.movimentos) return null;
+    modo = "supabase"; cache = c.dados; offline = c.em; avisar(); return c.em; } catch { return null; }
+}
+export function apagarCopia() { try { localStorage.removeItem(COPIA_KEY); localStorage.removeItem("gobbo_perfil"); } catch { /* */ } }
 
 // ---------------- CRUD genérico ----------------
 function limpar(obj) {
@@ -182,7 +207,28 @@ export async function cadastrar(nome, email, senha) {
   return data;
 }
 export async function sair() {
+  apagarCopia();
   if (modo === "supabase") { const cli = await supabase(); await cli.auth.signOut(); }
+}
+export async function recuperarSenha(email) {
+  const cli = await supabase();
+  const { error } = await cli.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  if (error) throw new Error(error.message);
+}
+export async function trocarSenha(nova) {
+  const cli = await supabase();
+  const { error } = await cli.auth.updateUser({ password: nova });
+  if (error) throw new Error(error.message);
+}
+export async function aoEventoAuth(fn) { const cli = await supabase(); cli.auth.onAuthStateChange((ev) => fn(ev)); }
+// registra erro do aparelho no servidor (para diagnóstico); nunca derruba o app
+export async function registrarErro(etapa, e, versao) {
+  try {
+    if (modo === "demo") return;
+    const cli = await supabase();
+    await cli.from("erros_app").insert({ etapa, mensagem: String(e?.message || e).slice(0, 500), detalhe: String(e?.stack || "").slice(0, 2000),
+      aparelho: navigator.userAgent.slice(0, 300) + (matchMedia("(display-mode: standalone)").matches ? " [app]" : " [navegador]"), versao });
+  } catch { /* sem rede: ignora */ }
 }
 export async function meuPerfil() {
   const cli = await supabase();
