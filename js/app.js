@@ -24,6 +24,8 @@ const numBR = v => {
 };
 const meuCaminhao = () => D().motoristas?.find(m => m.id === S.perfil?.motorista_id)?.caminhao_id || "";
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// textos sigilosos ficam só no banco (tabela notas_internas, visível apenas aos sócios), nunca no código público
+const nota = k => esc(D().notas_internas?.find(x => x.chave === k)?.texto || "");
 const D = () => db.dados();
 const socio = () => db.getModo() === "demo" || S.perfil?.papel === "socio";
 const nomeMot = id => D().motoristas.find(m => m.id === id)?.nome || "";
@@ -546,7 +548,7 @@ function viewFechamento() {
       <td class="num">${brl(k.recebido)}</td><td class="num ${k.saldo > 0.009 ? "neg" : "pos"}">${brl(k.saldo)}</td></tr>`; }).join("");
 
   const corpo = `<div class="kpis">
-      ${kpi("Faturado na semana", brl(i.faturado), `${fr.length} viagens · ${dataBR(s.inicio).slice(0, 5)} (sex) a ${dataBR(s.fim).slice(0, 5)} (qui)`, "navy")}
+      ${kpi("Faturado na semana", brl(i.faturado), `${fr.length} viagens · ${dataBR(s.inicio).slice(0, 5)} (${diaSem(s.inicio).toLowerCase()}) a ${dataBR(s.fim).slice(0, 5)} (${diaSem(s.fim).toLowerCase()})`, "navy")}
       ${kpi("Oficial Levíssima", s.total_oficial ? brl(s.total_oficial) : "aguardando", s.total_oficial ? (Math.abs(i.faturado - n(s.total_oficial)) < 0.01 ? "bate com o faturado" : `<span class="neg">diferença ${brl(i.faturado - n(s.total_oficial))}</span>`) : "planilha da Levíssima", "orange")}
       ${kpi("Recebido / créditos", brl(i.recebido), `${rec.length} lançamento(s)`, "green")}
       ${kpi("Saldo a receber", brl(i.saldo), s.status === "aberta" ? "semana aberta" : s.status, i.saldo > 0.009 ? "red" : "gd")}
@@ -554,7 +556,7 @@ function viewFechamento() {
       ${kpi("Pendências", String(pend.length + semLista.length), pend.length + semLista.length ? "ver lista abaixo" : "tudo conferido", pend.length + semLista.length ? "red" : "green")}
     </div>
     <div class="card" style="margin-bottom:16px"><h3>Viagens por dia e motorista</h3>${grade}
-      <p class="muted" style="font-size:12px;margin-bottom:0">Semana de fechamento: sexta a quinta (a Levíssima paga na quinta). Toque numa viagem para editar.</p></div>
+      <p class="muted" style="font-size:12px;margin-bottom:0">A Levíssima fecha na quinta: o frete de quinta às vezes entra neste fechamento e às vezes no seguinte — confira com a planilha oficial e com a semana anterior. Toque numa viagem para editar.</p></div>
     <div class="grid g2" style="margin-bottom:16px">
       <div class="card"><h3>Para conferir</h3>${pend.length || semLista.length ? `<div style="display:flex;flex-direction:column;gap:6px">
         ${pend.map(f => `<div class="fx clk" data-id="${f.id}"><span>${dataBR(f.data).slice(0, 5)} · ${esc(nomeMot(f.motorista_id))} · ${esc(descFrete(f))}<br><span class="muted" style="font-size:12px">${esc([f.status === "em_rota" ? "em rota" : f.status === "agendado" ? "agendado" : "", f.cidade === "A CONFIRMAR" ? "cidade a confirmar" : "", f.obs].filter(Boolean).join(" · "))}</span></span><b>${brl0(f.valor)}</b></div>`).join("")}
@@ -1036,7 +1038,7 @@ function viewHolding() {
       <p><a href="#socios">Ver extrato de cada sócio →</a></p></div>
     <div class="card"><h3>Uma empresa pagou pela outra</h3>${ee.length ? `<div class="tbl-wrap"><table><tr><th>Quem deve</th><th>A quem</th><th class="num">Valor</th></tr>
       ${ee.map(x => `<tr><td>${chipEmp(x.deve)}</td><td>${chipEmp(x.credor)}</td><td class="num">${brl0(x.valor)}</td></tr>`).join("")}</table></div>` : `<p class="muted">Nada em aberto.</p>`}
-      <p class="muted" style="font-size:12px">Ex.: a conta da Logística pagou obra da SkyFit → SkyFit deve à Logística. Família = Kátia, pai, imóveis (apto Novamerica, terreno, colégio).</p></div>
+      <p class="muted" style="font-size:12px">Ex.: a conta da Logística pagou obra da SkyFit → SkyFit deve à Logística. ${nota("holding_familia")}</p></div>
   </div>`;
   layout("holding", "Gobbo Investimentos – visão geral da holding", corpo, seletorAno() + `<button class="btn pri" id="novoM">+ Lançamento</button>`);
   ligarAno();
@@ -1170,11 +1172,10 @@ function viewSocios() {
       ${emps.map(e => `<tr><td>${chipEmp(e.id)}</td>${H.SOCIOS_ID.map(x => { const v = se[e.id]?.[x] || 0; return `<td class="num ${v < 0 ? "neg" : "pos"}">${brl(v)}</td>`; }).join("")}</tr>`).join("")}
       <tr class="tot"><td>Total</td>${H.SOCIOS_ID.map(x => `<td class="num">${brl(emps.reduce((t, e) => t + (se[e.id]?.[x] || 0), 0))}</td>`).join("")}</tr></table></div>
       <p class="muted" style="font-size:12px">Positivo = a empresa deve ao sócio (ele aportou/pagou mais do que retirou). Negativo = o sócio retirou/recebeu mais do que pôs.
-      Logística: parte do fechamento oficial de 02/05/2024 (caminhão devia Nicolas R$ 4.054,98, André R$ 1.850,33, Léo R$ 11.217,44). Família: dinheiro de Kátia/pai/imóveis que passou por cada sócio.</p></div>
+      ${nota("socios_saldo_logistica")}</p></div>
     <div class="card"><h3>Entre irmãos</h3><div class="tbl-wrap"><table><tr><th>Situação</th><th class="num">Valor</th></tr>
       ${entre.map(x => `<tr><td>${x.valor >= 0 ? `<b>${nomeSoc(x.a)}</b> deve a <b>${nomeSoc(x.b)}</b>` : `<b>${nomeSoc(x.b)}</b> deve a <b>${nomeSoc(x.a)}</b>`}</td><td class="num">${brl(Math.abs(x.valor))}</td></tr>`).join("")}</table></div>
-      <p class="muted" style="font-size:12px">André × Nicolas: saldo informado no grupo até 13/08/2025 (André devia R$ 107.636,58) + todos os comprovantes depois disso. André × Léo: grupo Léo/André desde jan/2025.
-      Atenção: desde ago/2025 o Nicolas parou de lançar as parcelas de cartão/parcelamento do André – confirme antes de acertar.</p>
+      <p class="muted" style="font-size:12px">${nota("socios_entre_irmaos")}</p>
       <h3 style="margin-top:14px">Resumo por sócio</h3><div class="tbl-wrap"><table><tr><th>Sócio</th><th class="num">Aportou</th><th class="num">Pagou p/ empresas</th><th class="num">Retirou</th><th class="num">Recebeu em nome delas</th></tr>
       ${H.SOCIOS_ID.map(x => { const r = resumo(x); return `<tr><td><b>${nomeSoc(x)}</b></td><td class="num">${brl0(r.aportou)}</td><td class="num">${brl0(r.pagou)}</td><td class="num">${brl0(r.retirou)}</td><td class="num">${brl0(r.recebeu)}</td></tr>`; }).join("")}</table></div></div>
   </div>
@@ -1558,7 +1559,8 @@ function telaLogin(msg = "") {
   };
 }
 const traduzErro = m => (/Invalid login/i.test(m) ? "E-mail ou senha incorretos." : /Email not confirmed/i.test(m) ? "Confirme seu e-mail pelo link recebido antes de entrar."
-  : /already registered/i.test(m) ? "Este e-mail já tem acesso. Use “Entrar”." : m);
+  : /already registered/i.test(m) ? "Este e-mail já tem acesso. Use “Entrar”."
+  : /Database error saving new user|não autorizado/i.test(m) ? "Cadastro não autorizado. O acesso é exclusivo dos sócios da Gobbo Investimentos." : m);
 
 function telaSemBanco() {
   root.innerHTML = `<div class="login"><div class="box"><img src="icons/logo.svg" alt="${esc(EMPRESA)}"><h2>Banco de dados ainda não configurado</h2>
@@ -1569,7 +1571,7 @@ function telaSemBanco() {
   document.getElementById("again").onclick = () => iniciar();
 }
 
-const VERSAO = "v12";
+const VERSAO = "v13";
 const perfilSalvo = () => { try { return JSON.parse(localStorage.getItem("gobbo_perfil") || "null"); } catch { return null; } };
 // erro inesperado em qualquer tela: avisa sem derrubar o app e registra para diagnóstico
 window.addEventListener("error", ev => db.registrarErro("tela", ev.error || ev.message, VERSAO));

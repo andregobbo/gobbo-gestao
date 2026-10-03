@@ -175,15 +175,18 @@ language sql stable security definer set search_path = public as $$
   select motorista_id from public.perfis where id = auth.uid();
 $$;
 
--- Novo usuário -> cria perfil. Só os e-mails da lista 'socios_iniciais' viram sócio automaticamente;
--- todos os demais entram como motorista SEM vínculo (não veem dado nenhum) até um sócio liberar
--- em Cadastros › Usuários. Isso impede que um estranho que se cadastre no site público veja algo.
+-- Novo usuário -> cria perfil. Só e-mails da tabela acesso_permitido (definida mais abaixo, só sócios editam)
+-- podem criar conta; o papel vem de lá. Qualquer outro cadastro é recusado.
 create or replace function public.novo_usuario() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare v_papel text;
 begin
+  select papel into v_papel from public.acesso_permitido where lower(email) = lower(new.email);
+  if v_papel is null then
+    raise exception 'Cadastro não autorizado: e-mail fora da lista de acesso da Gobbo Investimentos';
+  end if;
   insert into public.perfis (id, nome, email, papel)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'nome', split_part(new.email, '@', 1)), new.email,
-          case when lower(new.email) = any (array['andrergobbo@gmail.com', 'andregobbo@outlook.com.br', 'nicolas@grupolevissima.com.br', 'leonardo@grupolevissima.com.br']) then 'socio' else 'motorista' end)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'nome', split_part(new.email, '@', 1)), new.email, v_papel)
   on conflict (id) do nothing;
   return new;
 end;
@@ -479,10 +482,10 @@ alter table public.config add column if not exists corte_saldo_logistica date de
 
 insert into public.empresas (id,nome,tipo,cnpj,cor,ordem,pai_id) values
  ('holding','Gobbo Participações e Investimentos','holding',null,'#0b2e59',0,null),
- ('logistica','Gobbo Logística e Serviços','operacional','59.992.583/0001-27','#1f6feb',1,'holding'),
- ('sky_cl','SkyFit Campo Limpo Paulista','operacional','62.317.200/0001-20','#e8590c',2,'holding'),
+ ('logistica','Gobbo Logística e Serviços','operacional',null,'#1f6feb',1,'holding'),
+ ('sky_cl','SkyFit Campo Limpo Paulista','operacional',null,'#e8590c',2,'holding'),
  ('sky_morato','SkyFit Francisco Morato','operacional',null,'#c2255c',3,'holding'),
- ('familia','Família / Pessoal (Kátia, pai, imóveis)','familia',null,'#6f42c1',4,null)
+ ('familia','Família / Pessoal','familia',null,'#6f42c1',4,null)
 on conflict (id) do update set nome=excluded.nome, tipo=excluded.tipo, cnpj=coalesce(excluded.cnpj, public.empresas.cnpj), cor=excluded.cor, ordem=excluded.ordem, pai_id=excluded.pai_id;
 insert into public.socios (id,nome,cor,ordem) values
  ('andre','André','#1f6feb',1),('nicolas','Nicolas','#2f9e44',2),('leonardo','Leonardo','#e8590c',3)
@@ -568,3 +571,102 @@ drop policy if exists registra on public.erros_app;
 create policy registra on public.erros_app for insert to authenticated with check (usuario = auth.uid());
 drop policy if exists socio_le on public.erros_app;
 create policy socio_le on public.erros_app for select to authenticated using (public.is_socio());
+
+-- ---------------------------------------------------------------------
+-- v13 – Proteção dos dados (03/10/2026): informações exclusivas dos sócios da Gobbo Investimentos
+-- ---------------------------------------------------------------------
+-- 1) Sem login (anon) = nenhum acesso a tabelas, sequências ou funções
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+revoke execute on all functions in schema public from anon;
+alter default privileges for role postgres in schema public revoke all on tables from anon;
+alter default privileges for role postgres in schema public revoke all on sequences from anon;
+alter default privileges for role postgres in schema public revoke execute on functions from anon;
+alter default privileges for role postgres in schema public revoke execute on functions from public;
+revoke execute on function public.is_socio() from public, anon;
+revoke execute on function public.meu_motorista() from public, anon;
+grant execute on function public.is_socio() to authenticated;
+grant execute on function public.meu_motorista() to authenticated;
+
+-- 2) Lista de e-mails autorizados a criar conta (os e-mails são cadastrados direto no banco, nunca neste arquivo)
+create table if not exists public.acesso_permitido (
+  email text primary key,
+  papel text not null default 'motorista' check (papel in ('socio','motorista')),
+  criado_em timestamptz not null default now()
+);
+alter table public.acesso_permitido enable row level security;
+drop policy if exists socio_tudo on public.acesso_permitido;
+create policy socio_tudo on public.acesso_permitido for all to authenticated using (public.is_socio()) with check (public.is_socio());
+revoke execute on function public.novo_usuario() from public, anon, authenticated;
+
+-- 3) Leitura restrita: usuário logado sem vínculo não vê nada; motorista vinculado vê só o necessário
+drop policy if exists leitura_logado on public.caminhoes;
+drop policy if exists leitura_logado on public.categorias;
+drop policy if exists leitura_logado on public.config;
+drop policy if exists leitura_logado on public.planos_manutencao;
+drop policy if exists leitura_logado on public.motoristas;
+drop policy if exists leitura_logado on public.semanas;
+drop policy if exists leitura_logado on public.tabela_fretes;
+drop policy if exists vinculado_le on public.caminhoes;
+drop policy if exists vinculado_le on public.categorias;
+drop policy if exists vinculado_le on public.config;
+drop policy if exists vinculado_le on public.planos_manutencao;
+drop policy if exists proprio_le on public.motoristas;
+create policy vinculado_le on public.caminhoes for select to authenticated using (public.meu_motorista() is not null);
+create policy vinculado_le on public.categorias for select to authenticated using (public.meu_motorista() is not null);
+create policy vinculado_le on public.config for select to authenticated using (public.meu_motorista() is not null);
+create policy vinculado_le on public.planos_manutencao for select to authenticated using (public.meu_motorista() is not null);
+create policy proprio_le on public.motoristas for select to authenticated using (id = public.meu_motorista());
+
+-- 4) Notas internas sigilosas: textos com saldos/nomes ficam só no banco (o conteúdo nunca vai para este arquivo)
+create table if not exists public.notas_internas (
+  chave text primary key,
+  texto text not null,
+  atualizado_em timestamptz not null default now()
+);
+alter table public.notas_internas enable row level security;
+drop policy if exists socio_tudo on public.notas_internas;
+create policy socio_tudo on public.notas_internas for all to authenticated using (public.is_socio()) with check (public.is_socio());
+
+-- 5) Auditoria: toda inclusão, alteração e exclusão fica registrada; ninguém edita a auditoria
+create table if not exists public.auditoria (
+  id bigserial primary key,
+  quando timestamptz not null default now(),
+  usuario uuid,
+  papel text,
+  tabela text not null,
+  operacao text not null,
+  registro_id text,
+  antes jsonb,
+  depois jsonb
+);
+create index if not exists auditoria_quando_idx on public.auditoria (quando desc);
+create index if not exists auditoria_tab_idx on public.auditoria (tabela, registro_id);
+alter table public.auditoria enable row level security;
+drop policy if exists socio_le on public.auditoria;
+create policy socio_le on public.auditoria for select to authenticated using (public.is_socio());
+revoke insert, update, delete, truncate on public.auditoria from authenticated, anon;
+
+create or replace function public.audita() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_reg jsonb := case when tg_op = 'DELETE' then to_jsonb(old) else to_jsonb(new) end;
+begin
+  insert into public.auditoria (usuario, papel, tabela, operacao, registro_id, antes, depois)
+  values (auth.uid(), coalesce(auth.role(), current_user), tg_table_name, tg_op,
+          coalesce(v_reg ->> 'id', v_reg ->> 'chave', v_reg ->> 'email'),
+          case when tg_op <> 'INSERT' then to_jsonb(old) end,
+          case when tg_op <> 'DELETE' then to_jsonb(new) end);
+  return coalesce(new, old);
+end $$;
+revoke execute on function public.audita() from public, anon, authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['fretes','despesas','recebimentos','movimentos','abastecimentos','acertos','manutencoes',
+    'semanas','dividas','bonus_media','pendencias','orcamentos','tabela_fretes','motoristas','caminhoes','config',
+    'empresas','socios','perfis','acesso_permitido','notas_internas','categorias','planos_manutencao','checklists'] loop
+    execute format('drop trigger if exists auditoria_trg on public.%I', t);
+    execute format('create trigger auditoria_trg after insert or update or delete on public.%I for each row execute function public.audita()', t);
+  end loop;
+end $$;

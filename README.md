@@ -35,15 +35,15 @@ abastecimentos são registro operacional (o valor do diesel entra pelo acerto do
 
 ## Holding Gobbo Investimentos (Gobbo Participações e Investimentos) – empresa principal, dona de todas as outras (v4)
 
-Uma plataforma para todas as empresas e para os três sócios (André, Nicolas, Leonardo):
+Uma plataforma para todas as empresas e para os sócios:
 
 | Empresa | O que entra |
 |---|---|
-| Gobbo Participações e Investimentos (holding) | Arrendamento recebido da Levíssima, empréstimos de terceiros (Rogério, Alessandro, Equipe Bombas, Luís), custo do dinheiro |
+| Gobbo Participações e Investimentos (holding) | Receitas da holding, empréstimos de terceiros, custo do dinheiro |
 | Gobbo Logística | Caminhões, fretes, diesel, manutenção, motoristas (telas da seção “Gobbo Logística”) |
 | SkyFit Campo Limpo Paulista | Academia aberta em fev/2026 |
 | SkyFit Francisco Morato | Academia em obra (inauguração prevista nov–dez) |
-| Família / Pessoal | Kátia, pai, imóveis (apto, terreno), consórcios |
+| Família / Pessoal | Movimentos da família, imóveis, consórcios |
 
 Telas da seção **Holding**: Visão geral, Empresas (DRE mês a mês), Contas (Kanban a pagar), Livro-caixa (filtros, CSV, importar),
 Sócios (saldo de cada sócio em cada empresa + quem deve a quem entre irmãos + extrato) e Dívidas.
@@ -65,15 +65,19 @@ Regras principais:
 ## Publicação
 1. Supabase › SQL Editor: rodar `supabase/schema.sql` (tabelas + segurança) e depois `supabase/seed.sql` (dados de setembro – arquivo local, não vai para o GitHub).
 2. GitHub: repositório `gobbo-gestao` → Settings › Pages → Branch `main` / root.
-3. Abrir `https://<usuario>.github.io/gobbo-gestao/`, “Criar acesso” com andrergobbo@gmail.com (vira sócio automaticamente).
-4. Motoristas criam o acesso pelo mesmo endereço; um sócio libera em Cadastros › Usuários (papel + motorista vinculado).
+3. Abrir `https://<usuario>.github.io/gobbo-gestao/`, “Criar acesso” com um e-mail cadastrado na tabela `acesso_permitido` (só sócios incluem e-mails).
+4. Novos acessos só depois que um sócio incluir o e-mail em `acesso_permitido`; o papel vem de lá.
 5. No celular: abrir o endereço → “Adicionar à tela inicial” (Android/iPhone). No computador: ícone de instalar na barra do navegador.
 
 ## Segurança
 - Repositório público: dados da empresa ficam fora (`.gitignore`: `privado/`, `data/`, `supabase/seed.sql`, `tools/`).
 - A chave `publishable` do Supabase é pública por natureza; quem protege os dados é o RLS do `schema.sql`.
 - Nunca coloque a chave `secret`/`service_role` no app nem no repositório.
-- Sócio só é atribuído automaticamente a andrergobbo@gmail.com; qualquer outro cadastro entra sem acesso a dados.
+- Cadastro só para e-mails da tabela `acesso_permitido` (fica no banco, não no código); qualquer outro e-mail é recusado.
+- Sem login (chave publishable) não há acesso a nenhuma tabela; dados só para sócios (RLS), motorista vinculado vê apenas o próprio.
+- Toda inclusão/alteração/exclusão fica na tabela `auditoria` (quem, quando, antes e depois), que ninguém pode editar.
+- Textos sigilosos (saldos, nomes, observações) ficam na tabela `notas_internas`, nunca no código público.
+- Nenhuma informação da empresa pode ser gravada fora da plataforma (Supabase): nada de planilhas, PDFs, cópias locais ou nuvem.
 
 ## Rodar localmente
 `python3 -m http.server 8765` na pasta do projeto e abrir `http://127.0.0.1:8765/?demo` (modo demonstração com os dados locais).
