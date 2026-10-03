@@ -1571,7 +1571,7 @@ function telaSemBanco() {
   document.getElementById("again").onclick = () => iniciar();
 }
 
-const VERSAO = "v13";
+const VERSAO = "v14";
 const perfilSalvo = () => { try { return JSON.parse(localStorage.getItem("gobbo_perfil") || "null"); } catch { return null; } };
 // erro inesperado em qualquer tela: avisa sem derrubar o app e registra para diagnóstico
 window.addEventListener("error", ev => db.registrarErro("tela", ev.error || ev.message, VERSAO));

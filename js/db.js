@@ -252,7 +252,8 @@ export async function bancoPronto() {
   try {
     const cli = await supabase();
     const { error } = await cli.from("config").select("id").limit(1);
-    return !error;
+    // sem login o banco recusa a leitura (permissão negada) – isso prova que o servidor respondeu
+    return !error || error.code === "42501" || /permission denied/i.test(error.message || "");
   } catch { return false; }
 }
 

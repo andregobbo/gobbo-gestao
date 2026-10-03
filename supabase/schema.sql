@@ -670,3 +670,45 @@ begin
     execute format('create trigger auditoria_trg after insert or update or delete on public.%I for each row execute function public.audita()', t);
   end loop;
 end $$;
+
+-- ---------------------------------------------------------------------
+-- v14 – Backup diário dentro do banco (03/10/2026): cópia completa de todas as tabelas, 30 dias guardados
+-- (junto com a tabela auditoria, nenhum lançamento se perde: dá para restaurar qualquer registro)
+-- ---------------------------------------------------------------------
+create table if not exists public.backups (
+  id bigserial primary key,
+  criado_em timestamptz not null default now(),
+  tabela text not null,
+  linhas int not null,
+  dados jsonb not null
+);
+create index if not exists backups_criado_idx on public.backups (criado_em desc, tabela);
+alter table public.backups enable row level security;
+drop policy if exists socio_le on public.backups;
+create policy socio_le on public.backups for select to authenticated using (public.is_socio());
+revoke insert, update, delete, truncate on public.backups from authenticated, anon;
+
+create or replace function public.fazer_backup() returns table (tabela text, linhas int)
+language plpgsql security definer set search_path = public as $$
+declare t text; n int; d jsonb;
+begin
+  if auth.uid() is not null and not public.is_socio() then raise exception 'Apenas sócios'; end if;
+  foreach t in array array['config','categorias','caminhoes','motoristas','tabela_fretes','semanas','fretes','despesas',
+    'recebimentos','acertos','manutencoes','abastecimentos','planos_manutencao','checklists','bonus_media','empresas',
+    'socios','dividas','movimentos','pendencias','orcamentos','notas_internas','perfis','acesso_permitido'] loop
+    execute format('select count(*), coalesce(jsonb_agg(to_jsonb(x)), ''[]''::jsonb) from public.%I x', t) into n, d;
+    insert into public.backups (tabela, linhas, dados) values (t, n, d);
+    tabela := t; linhas := n; return next;
+  end loop;
+  delete from public.backups b where b.criado_em < now() - interval '30 days';
+end $$;
+revoke execute on function public.fazer_backup() from public, anon;
+grant execute on function public.fazer_backup() to authenticated;
+
+do $$
+begin
+  perform cron.unschedule(jobid) from cron.job where jobname = 'backup_diario';
+  perform cron.schedule('backup_diario', '0 6 * * *', 'select public.fazer_backup()');   -- 3h de Brasília
+exception when others then
+  raise notice 'pg_cron indisponível – ative a extensão e rode este bloco de novo (%).', sqlerrm;
+end $$;
